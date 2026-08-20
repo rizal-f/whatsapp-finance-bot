@@ -101,42 +101,38 @@ export class MessageRouter {
     const lowerText = rawText.toLowerCase();
     const p = config.commandPrefix;
 
-    // 1. Perintah !groupid / !id / !help selalu direspon di grup
-    const isPublicCommand =
-      lowerText === `${p}groupid` ||
-      lowerText === `${p}id` ||
-      lowerText === '!groupid' ||
-      lowerText === '!id' ||
-      lowerText === `${p}bantuan` ||
-      lowerText === `${p}help` ||
-      lowerText === '!bantuan' ||
-      lowerText === '!help';
-
-    if (isGroup && isPublicCommand) {
-      logger.info({ chatJid, groupName, command: lowerText }, 'Menerima perintah grup publik');
-      await this.textHandler.handleTextMessage(
-        sock,
-        msg,
-        chatJid,
-        participantJid,
-        senderName,
-        groupName,
-        rawText,
-        isGroup
-      );
-      return;
-    }
-
-    // 2. Filter Keamanan Grup (Jika ALLOWED_GROUPS diisi di .env, hanya proses grup yang terdaftar)
+    // 1. Filter Keamanan Grup (Jika ALLOWED_GROUPS diisi di .env)
     if (isGroup && config.allowedGroups.length > 0) {
       const isGroupAllowed = config.allowedGroups.includes(chatJid);
       if (!isGroupAllowed) {
+        // Pada grup yang TIDAK diizinkan: HANYA perintah !groupid atau !id yang direspon (agar admin bisa salin ID grup)
+        const isGroupIdCommand =
+          lowerText === `${p}groupid` ||
+          lowerText === `${p}id` ||
+          lowerText === '!groupid' ||
+          lowerText === '!id';
+
+        if (isGroupIdCommand) {
+          await this.textHandler.handleTextMessage(
+            sock,
+            msg,
+            chatJid,
+            participantJid,
+            senderName,
+            groupName,
+            rawText,
+            isGroup
+          );
+          return;
+        }
+
+        // Semua perintah lain (!help, !laporan, foto struk, teks biasa) diabaikan secara total
         logger.debug({ chatJid, groupName }, 'Pesan grup diabaikan: Grup tidak terdaftar di ALLOWED_GROUPS');
         return;
       }
     }
 
-    // 3. Filter Keamanan Nomor di DM Pribadi (Jika ALLOWED_NUMBERS diisi di .env)
+    // 2. Filter Keamanan Nomor di DM Pribadi (Jika ALLOWED_NUMBERS diisi di .env)
     if (!isGroup && config.allowedNumbers.length > 0) {
       const isAllowed = config.allowedNumbers.includes(senderNumber);
       if (!isAllowed) {
