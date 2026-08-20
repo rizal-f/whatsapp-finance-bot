@@ -70,6 +70,8 @@ export class MessageRouter {
         text.startsWith('🤖') ||
         text.startsWith('❌') ||
         text.startsWith('⚠️') ||
+        text.startsWith('👥') ||
+        text.startsWith('🆔') ||
         text.startsWith('🗑️')
       ) {
         return;
@@ -78,7 +80,7 @@ export class MessageRouter {
 
     // Identifikasi nomor dan nama pengirim asli (di grup vs DM)
     const participantJid = isGroup
-      ? (msg.key.participant || (msg as any).participant || chatJid)
+      ? (msg.key.participant || (msg as any).participant || (msg as any).key?.participantPn || chatJid)
       : chatJid;
 
     const senderNumber = cleanPhoneNumber(participantJid);
@@ -87,37 +89,54 @@ export class MessageRouter {
     // Dapatkan nama grup jika dari grup
     const groupName = isGroup ? await resolveGroupName(sock, chatJid) : 'Direct Message';
 
-    // 1. Filter Keamanan Grup (Hanya proses grup yang ada di ALLOWED_GROUPS)
-    if (isGroup) {
-      const isGroupAllowed = config.allowedGroups.length > 0 && config.allowedGroups.includes(chatJid);
+    const inner = unwrapMessage(msg.message);
+    const rawText = (
+      inner?.conversation ||
+      inner?.extendedTextMessage?.text ||
+      inner?.imageMessage?.caption ||
+      inner?.documentMessage?.caption ||
+      ''
+    ).trim();
 
+    const lowerText = rawText.toLowerCase();
+    const p = config.commandPrefix;
+
+    // 1. Perintah !groupid / !id / !help selalu direspon di grup
+    const isPublicCommand =
+      lowerText === `${p}groupid` ||
+      lowerText === `${p}id` ||
+      lowerText === '!groupid' ||
+      lowerText === '!id' ||
+      lowerText === `${p}bantuan` ||
+      lowerText === `${p}help` ||
+      lowerText === '!bantuan' ||
+      lowerText === '!help';
+
+    if (isGroup && isPublicCommand) {
+      logger.info({ chatJid, groupName, command: lowerText }, 'Menerima perintah grup publik');
+      await this.textHandler.handleTextMessage(
+        sock,
+        msg,
+        chatJid,
+        participantJid,
+        senderName,
+        groupName,
+        rawText,
+        isGroup
+      );
+      return;
+    }
+
+    // 2. Filter Keamanan Grup (Jika ALLOWED_GROUPS diisi di .env, hanya proses grup yang terdaftar)
+    if (isGroup && config.allowedGroups.length > 0) {
+      const isGroupAllowed = config.allowedGroups.includes(chatJid);
       if (!isGroupAllowed) {
-        // Pengecualian: Jika Owner (nomor terdaftar di ALLOWED_NUMBERS) mengetik !groupid untuk melihat ID grup
-        const inner = unwrapMessage(msg.message);
-        const text = (inner?.conversation || inner?.extendedTextMessage?.text || '').trim().toLowerCase();
-        const p = config.commandPrefix;
-        const isOwner = config.allowedNumbers.length === 0 || config.allowedNumbers.includes(senderNumber);
-
-        if (isOwner && (text === `${p}groupid` || text === `${p}id` || text === '!groupid' || text === '!id')) {
-          await this.textHandler.handleTextMessage(
-            sock,
-            msg,
-            chatJid,
-            participantJid,
-            senderName,
-            groupName,
-            text,
-            isGroup
-          );
-          return;
-        }
-
-        logger.debug({ chatJid, groupName, senderNumber }, 'Pesan grup diabaikan: Grup tidak terdaftar di ALLOWED_GROUPS');
+        logger.debug({ chatJid, groupName }, 'Pesan grup diabaikan: Grup tidak terdaftar di ALLOWED_GROUPS');
         return;
       }
     }
 
-    // 2. Filter Keamanan Nomor (Jika di DM dan ALLOWED_NUMBERS diisi)
+    // 3. Filter Keamanan Nomor di DM Pribadi (Jika ALLOWED_NUMBERS diisi di .env)
     if (!isGroup && config.allowedNumbers.length > 0) {
       const isAllowed = config.allowedNumbers.includes(senderNumber);
       if (!isAllowed) {
@@ -125,8 +144,6 @@ export class MessageRouter {
         return;
       }
     }
-
-    const inner = unwrapMessage(msg.message);
 
     // Periksa apakah pesan mengandung gambar
     const isImage =
@@ -147,15 +164,8 @@ export class MessageRouter {
     }
 
     // Periksa apakah pesan mengandung teks
-    const textContent =
-      inner?.conversation ||
-      inner?.extendedTextMessage?.text ||
-      inner?.imageMessage?.caption ||
-      inner?.documentMessage?.caption ||
-      '';
-
-    if (textContent.trim()) {
-      logger.info({ senderNumber, senderName, isGroup, text: textContent }, 'Menerima pesan teks');
+    if (rawText) {
+      logger.info({ senderNumber, senderName, isGroup, groupName, text: rawText }, 'Menerima pesan teks');
       await this.textHandler.handleTextMessage(
         sock,
         msg,
@@ -163,7 +173,7 @@ export class MessageRouter {
         participantJid,
         senderName,
         groupName,
-        textContent,
+        rawText,
         isGroup
       );
       return;
