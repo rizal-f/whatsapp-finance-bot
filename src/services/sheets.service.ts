@@ -104,13 +104,15 @@ export class SheetsService {
         'Sumber Dana',
         'Penerima / Merchant',
         'Keterangan',
+        'Dicatat Oleh',
+        'Grup / Chat',
         'AI Confidence'
       ];
 
       if (!existingHeaders || existingHeaders.length === 0) {
         await client.spreadsheets.values.update({
           spreadsheetId: this.spreadsheetId,
-          range: `${this.transactionsSheetName}!A1:K1`,
+          range: `${this.transactionsSheetName}!A1:M1`,
           valueInputOption: 'USER_ENTERED',
           requestBody: {
             values: [headers]
@@ -128,7 +130,9 @@ export class SheetsService {
    * Menyimpan satu transaksi baru ke baris paling bawah sheet
    */
   public async appendTransaction(
-    extracted: ExtractedTransaction
+    extracted: ExtractedTransaction,
+    submittedBy: string = 'Pribadi',
+    groupName: string = 'Direct Message'
   ): Promise<TransactionRecord> {
     const client = this.getClient();
     const id = generateTransactionId();
@@ -145,12 +149,14 @@ export class SheetsService {
       extracted.source,
       extracted.recipient,
       extracted.notes,
+      submittedBy,
+      groupName,
       Math.round(extracted.confidence * 100) + '%'
     ];
 
     await client.spreadsheets.values.append({
       spreadsheetId: this.spreadsheetId,
-      range: `${this.transactionsSheetName}!A:K`,
+      range: `${this.transactionsSheetName}!A:M`,
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
       requestBody: {
@@ -161,10 +167,12 @@ export class SheetsService {
     const record: TransactionRecord = {
       ...extracted,
       id,
-      timestamp
+      timestamp,
+      submittedBy,
+      groupName
     };
 
-    logger.info({ id, nominal: extracted.amount, kategori: extracted.category }, 'Transaksi berhasil dicatat ke Sheets');
+    logger.info({ id, nominal: extracted.amount, kategori: extracted.category, submittedBy, groupName }, 'Transaksi berhasil dicatat ke Sheets');
     return record;
   }
 

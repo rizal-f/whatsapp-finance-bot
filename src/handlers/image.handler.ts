@@ -2,6 +2,7 @@ import { WAMessage, WASocket, downloadMediaMessage } from '@whiskeysockets/baile
 import { GeminiService } from '../services/gemini.service.js';
 import { SheetsService } from '../services/sheets.service.js';
 import { ReporterService } from '../services/reporter.service.js';
+import { cleanPhoneNumber } from '../utils/formatter.js';
 import { logger } from '../utils/logger.js';
 
 export class ImageHandler {
@@ -14,12 +15,15 @@ export class ImageHandler {
   public async handleImageMessage(
     sock: WASocket,
     msg: WAMessage,
-    senderJid: string
+    chatJid: string,
+    senderJid: string,
+    senderName: string,
+    groupName: string = 'Direct Message'
   ): Promise<void> {
     try {
       // 1. Beri respon awal bahwa gambar sedang dianalisis
       await sock.sendMessage(
-        senderJid,
+        chatJid,
         {
           text: '⏳ *Sedang membaca struk / bukti transaksi...*\n_Mohon tunggu sebentar ya..._'
         },
@@ -39,7 +43,7 @@ export class ImageHandler {
 
       if (!buffer || buffer.length === 0) {
         await sock.sendMessage(
-          senderJid,
+          chatJid,
           {
             text: '❌ Gagal mengunduh gambar bukti transaksi. Silakan kirim ulang gambarnya.'
           },
@@ -66,7 +70,7 @@ export class ImageHandler {
 
       if (!extracted) {
         await sock.sendMessage(
-          senderJid,
+          chatJid,
           {
             text: '⚠️ Gambar tidak terdeteksi sebagai bukti transaksi/struk pembayaran yang jelas.\n\nPastikan foto tidak buram, nominal transaksi dan nama merchant terlihat jelas.'
           },
@@ -76,15 +80,16 @@ export class ImageHandler {
       }
 
       // 4. Simpan ke Google Spreadsheet
-      const record = await this.sheetsService.appendTransaction(extracted);
+      const submittedBy = senderName ? `${senderName} (${cleanPhoneNumber(senderJid)})` : cleanPhoneNumber(senderJid);
+      const record = await this.sheetsService.appendTransaction(extracted, submittedBy, groupName);
 
       // 5. Kirim konfirmasi hasil pencatatan
       const replyMessage = this.reporterService.formatTransactionSavedMessage(record);
-      await sock.sendMessage(senderJid, { text: replyMessage }, { quoted: msg });
+      await sock.sendMessage(chatJid, { text: replyMessage }, { quoted: msg });
     } catch (error: any) {
       logger.error({ error }, 'Error pada pemrosesan ImageHandler');
       await sock.sendMessage(
-        senderJid,
+        chatJid,
         {
           text: `❌ Terjadi kesalahan saat memproses gambar transaksi:\n_${error.message || 'Unknown error'}_`
         },

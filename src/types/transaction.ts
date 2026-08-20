@@ -37,6 +37,8 @@ export type ExtractedTransaction = z.infer<typeof ExtractedTransactionSchema>;
 export interface TransactionRecord extends ExtractedTransaction {
   id: string;
   timestamp: string; // Waktu saat data dimasukkan
+  submittedBy?: string; // Nama / nomor pengirim
+  groupName?: string; // Nama grup WhatsApp (atau 'Pribadi / DM')
   sheetRowIndex?: number;
 }
 

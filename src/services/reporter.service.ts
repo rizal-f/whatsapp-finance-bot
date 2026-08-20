@@ -11,6 +11,9 @@ export class ReporterService {
     const isTransfer = record.type === 'TRANSFER';
     const icon = isIncome ? '🟢 *PEMASUKAN*' : isTransfer ? '🔄 *TRANSFER*' : '🔴 *PENGELUARAN*';
 
+    const groupInfo = record.groupName && record.groupName !== 'Direct Message' ? `👥 *Grup:* ${record.groupName}\n` : '';
+    const submitterInfo = record.submittedBy && record.submittedBy !== 'Pribadi' ? `👤 *Oleh:* ${record.submittedBy}\n` : '';
+
     return `✅ *TRANSAKSI BERHASIL DICATAT*
 
 ${icon}
@@ -20,7 +23,7 @@ ${icon}
 🏪 *Merchant / Toko:* ${record.recipient || '-'}
 💳 *Sumber Dana:* ${record.source || '-'}
 📅 *Tanggal:* ${formatDateIndonesian(record.date)} ${record.time ? `(${record.time})` : ''}
-📝 *Keterangan:* ${record.notes || '-'}
+${submitterInfo}${groupInfo}📝 *Keterangan:* ${record.notes || '-'}
 ━━━━━━━━━━━━━━━━━━━━
 🆔 _Ref: ${record.id}_
 _Ketik *${config.commandPrefix}batal* dalam 2 menit jika ingin membatalkan transaksi ini._`;

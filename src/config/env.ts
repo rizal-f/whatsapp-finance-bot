@@ -12,6 +12,7 @@ export interface AppConfig {
   googleCredentialsPath: string;
   googleCredentialsJson: string;
   allowedNumbers: string[];
+  allowedGroups: string[];
   botName: string;
   commandPrefix: string;
 }
@@ -46,6 +47,14 @@ function parseAllowedNumbers(raw?: string): string[] {
     .filter((num) => num.length > 5);
 }
 
+function parseAllowedGroups(raw?: string): string[] {
+  if (!raw || raw.trim() === '') return [];
+  return raw
+    .split(',')
+    .map((g) => g.trim())
+    .filter((g) => g.length > 0);
+}
+
 export const config: AppConfig = {
   port: parseInt(process.env.PORT || '8000', 10),
   geminiApiKey: process.env.GEMINI_API_KEY || '',
@@ -54,6 +63,7 @@ export const config: AppConfig = {
   googleCredentialsPath: resolveGoogleCredentials(),
   googleCredentialsJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_CREDENTIALS_JSON || '',
   allowedNumbers: parseAllowedNumbers(process.env.ALLOWED_NUMBERS),
+  allowedGroups: parseAllowedGroups(process.env.ALLOWED_GROUPS),
   botName: process.env.BOT_NAME || 'FinanceBot',
   commandPrefix: process.env.COMMAND_PREFIX || '!'
 };

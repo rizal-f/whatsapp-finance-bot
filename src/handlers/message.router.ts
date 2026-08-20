@@ -24,6 +24,24 @@ function unwrapMessage(message: any): any {
   return m || message;
 }
 
+// Cache nama grup agar tidak sering memanggil groupMetadata
+const groupCache = new Map<string, { name: string; time: number }>();
+
+async function resolveGroupName(sock: WASocket, groupJid: string): Promise<string> {
+  const cached = groupCache.get(groupJid);
+  if (cached && Date.now() - cached.time < 1000 * 60 * 30) {
+    return cached.name;
+  }
+  try {
+    const meta = await sock.groupMetadata(groupJid);
+    const name = meta.subject || groupJid;
+    groupCache.set(groupJid, { name, time: Date.now() });
+    return name;
+  } catch {
+    return 'Grup WhatsApp';
+  }
+}
+
 export class MessageRouter {
   constructor(
     private imageHandler: ImageHandler,
@@ -36,8 +54,10 @@ export class MessageRouter {
       return;
     }
 
-    const senderJid = msg.key.remoteJid;
-    if (!senderJid) return;
+    const chatJid = msg.key.remoteJid;
+    if (!chatJid) return;
+
+    const isGroup = chatJid.endsWith('@g.us');
 
     // Hindari loop: abaikan pesan hasil balasan bot sendiri
     if (msg.key.fromMe) {
@@ -56,28 +76,52 @@ export class MessageRouter {
       }
     }
 
-    // Nomor pengirim
-    const senderNumber = cleanPhoneNumber(senderJid);
+    // Identifikasi nomor dan nama pengirim asli (di grup vs DM)
+    const participantJid = isGroup
+      ? (msg.key.participant || (msg as any).participant || chatJid)
+      : chatJid;
 
-    // Keamanan: Filter nomor yang diizinkan (jika dikonfigurasi di ALLOWED_NUMBERS)
-    if (config.allowedNumbers.length > 0) {
+    const senderNumber = cleanPhoneNumber(participantJid);
+    const senderName = msg.pushName || senderNumber;
+
+    // Dapatkan nama grup jika dari grup
+    const groupName = isGroup ? await resolveGroupName(sock, chatJid) : 'Direct Message';
+
+    // 1. Filter Keamanan Grup (Jika ALLOWED_GROUPS diisi)
+    if (isGroup && config.allowedGroups.length > 0) {
+      const isGroupAllowed = config.allowedGroups.includes(chatJid);
+      if (!isGroupAllowed) {
+        logger.debug({ chatJid, groupName }, 'Pesan grup diabaikan: ID grup tidak ada di ALLOWED_GROUPS');
+        return;
+      }
+    }
+
+    // 2. Filter Keamanan Nomor (Jika di DM dan ALLOWED_NUMBERS diisi)
+    if (!isGroup && config.allowedNumbers.length > 0) {
       const isAllowed = config.allowedNumbers.includes(senderNumber);
       if (!isAllowed) {
-        logger.warn({ senderNumber }, 'Pesan diabaikan: nomor pengirim tidak ada dalam ALLOWED_NUMBERS');
+        logger.warn({ senderNumber }, 'Pesan DM diabaikan: nomor pengirim tidak ada dalam ALLOWED_NUMBERS');
         return;
       }
     }
 
     const inner = unwrapMessage(msg.message);
 
-    // Periksa apakah pesan mengandung gambar (langsung atau via dokumen gambar)
+    // Periksa apakah pesan mengandung gambar
     const isImage =
       !!inner?.imageMessage ||
       (!!inner?.documentMessage && String(inner.documentMessage.mimetype || '').startsWith('image/'));
 
     if (isImage) {
-      logger.info({ senderNumber }, 'Menerima pesan gambar dari WhatsApp');
-      await this.imageHandler.handleImageMessage(sock, msg, senderJid);
+      logger.info({ senderNumber, senderName, isGroup, groupName }, 'Menerima pesan gambar bukti transaksi');
+      await this.imageHandler.handleImageMessage(
+        sock,
+        msg,
+        chatJid,
+        participantJid,
+        senderName,
+        groupName
+      );
       return;
     }
 
@@ -90,8 +134,17 @@ export class MessageRouter {
       '';
 
     if (textContent.trim()) {
-      logger.info({ senderNumber, text: textContent }, 'Menerima pesan teks dari WhatsApp');
-      await this.textHandler.handleTextMessage(sock, msg, senderJid, textContent);
+      logger.info({ senderNumber, senderName, isGroup, text: textContent }, 'Menerima pesan teks');
+      await this.textHandler.handleTextMessage(
+        sock,
+        msg,
+        chatJid,
+        participantJid,
+        senderName,
+        groupName,
+        textContent,
+        isGroup
+      );
       return;
     }
   }
