@@ -87,11 +87,32 @@ export class MessageRouter {
     // Dapatkan nama grup jika dari grup
     const groupName = isGroup ? await resolveGroupName(sock, chatJid) : 'Direct Message';
 
-    // 1. Filter Keamanan Grup (Jika ALLOWED_GROUPS diisi)
-    if (isGroup && config.allowedGroups.length > 0) {
-      const isGroupAllowed = config.allowedGroups.includes(chatJid);
+    // 1. Filter Keamanan Grup (Hanya proses grup yang ada di ALLOWED_GROUPS)
+    if (isGroup) {
+      const isGroupAllowed = config.allowedGroups.length > 0 && config.allowedGroups.includes(chatJid);
+
       if (!isGroupAllowed) {
-        logger.debug({ chatJid, groupName }, 'Pesan grup diabaikan: ID grup tidak ada di ALLOWED_GROUPS');
+        // Pengecualian: Jika Owner (nomor terdaftar di ALLOWED_NUMBERS) mengetik !groupid untuk melihat ID grup
+        const inner = unwrapMessage(msg.message);
+        const text = (inner?.conversation || inner?.extendedTextMessage?.text || '').trim().toLowerCase();
+        const p = config.commandPrefix;
+        const isOwner = config.allowedNumbers.length === 0 || config.allowedNumbers.includes(senderNumber);
+
+        if (isOwner && (text === `${p}groupid` || text === `${p}id` || text === '!groupid' || text === '!id')) {
+          await this.textHandler.handleTextMessage(
+            sock,
+            msg,
+            chatJid,
+            participantJid,
+            senderName,
+            groupName,
+            text,
+            isGroup
+          );
+          return;
+        }
+
+        logger.debug({ chatJid, groupName, senderNumber }, 'Pesan grup diabaikan: Grup tidak terdaftar di ALLOWED_GROUPS');
         return;
       }
     }
