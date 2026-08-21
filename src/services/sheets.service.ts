@@ -1,13 +1,27 @@
 import { google, sheets_v4 } from 'googleapis';
 import { config } from '../config/env.js';
 import { logger } from '../utils/logger.js';
-import { TransactionRecord, ExtractedTransaction, MonthlySummary, CategorySummary } from '../types/transaction.js';
-import { generateTransactionId, getIndonesianMonthName, getCurrentDateISO, normalizeSheetDate, normalizeSheetTime } from '../utils/formatter.js';
+import {
+  TransactionRecord,
+  ExtractedTransaction,
+  MonthlySummary,
+  CategorySummary,
+  ALL_TARGET_SHEETS,
+  TARGET_SHEETS,
+  TargetSheetName
+} from '../types/transaction.js';
+import {
+  generateTransactionId,
+  getIndonesianMonthName,
+  getCurrentDateISO,
+  normalizeSheetDate,
+  normalizeSheetTime
+} from '../utils/formatter.js';
 
 export class SheetsService {
   private sheets: sheets_v4.Sheets | null = null;
   private spreadsheetId: string;
-  private transactionsSheetName = 'Transactions';
+  private lastInsertedSheet: string = TARGET_SHEETS.MAKAN;
 
   constructor() {
     this.spreadsheetId = config.spreadsheetId;
@@ -35,7 +49,7 @@ export class SheetsService {
       this.sheets = google.sheets({ version: 'v4', auth: authClient as any });
 
       await this.ensureSheetSetup();
-      logger.info('Google Sheets API berhasil terhubung.');
+      logger.info('Google Sheets API berhasil terhubung ke 5 sheets.');
     } catch (error) {
       logger.error({ error }, 'Gagal menghubungkan Google Sheets API');
       throw error;
@@ -50,7 +64,7 @@ export class SheetsService {
   }
 
   /**
-   * Memastikan Sheet 'Transactions' dan header kolom telah tersedia
+   * Memastikan ke-5 Sheet (Transaksi Istri, Transaksi Suami, Transaksi Makan, Transaksi Belanja Bulanan, Tabungan) telah tersedia
    */
   public async ensureSheetSetup(): Promise<void> {
     const client = this.getClient();
@@ -60,39 +74,37 @@ export class SheetsService {
         spreadsheetId: this.spreadsheetId
       });
 
-      const sheetExists = spreadsheet.data.sheets?.some(
-        (s) => s.properties?.title === this.transactionsSheetName
+      const existingSheetTitles = new Set(
+        (spreadsheet.data.sheets || []).map((s) => s.properties?.title || '')
       );
 
-      if (!sheetExists) {
-        // Buat sheet baru jika belum ada
+      const addSheetRequests: sheets_v4.Schema$Request[] = [];
+
+      for (const sheetTitle of ALL_TARGET_SHEETS) {
+        if (!existingSheetTitles.has(sheetTitle)) {
+          addSheetRequests.push({
+            addSheet: {
+              properties: {
+                title: sheetTitle,
+                gridProperties: {
+                  frozenRowCount: 1
+                }
+              }
+            }
+          });
+        }
+      }
+
+      if (addSheetRequests.length > 0) {
         await client.spreadsheets.batchUpdate({
           spreadsheetId: this.spreadsheetId,
           requestBody: {
-            requests: [
-              {
-                addSheet: {
-                  properties: {
-                    title: this.transactionsSheetName,
-                    gridProperties: {
-                      frozenRowCount: 1
-                    }
-                  }
-                }
-              }
-            ]
+            requests: addSheetRequests
           }
         });
-        logger.info(`Sheet '${this.transactionsSheetName}' berhasil dibuat.`);
+        logger.info(`Berhasil membuat ${addSheetRequests.length} tab sheet baru di Google Spreadsheet.`);
       }
 
-      // Periksa header
-      const headerResponse = await client.spreadsheets.values.get({
-        spreadsheetId: this.spreadsheetId,
-        range: `${this.transactionsSheetName}!A1:K1`
-      });
-
-      const existingHeaders = headerResponse.data.values?.[0];
       const headers = [
         'ID Transaksi',
         'Timestamp Input',
@@ -109,30 +121,44 @@ export class SheetsService {
         'AI Confidence'
       ];
 
-      if (!existingHeaders || existingHeaders.length === 0) {
-        await client.spreadsheets.values.update({
-          spreadsheetId: this.spreadsheetId,
-          range: `${this.transactionsSheetName}!A1:M1`,
-          valueInputOption: 'USER_ENTERED',
-          requestBody: {
-            values: [headers]
+      // Periksa dan isi header di setiap tab sheet
+      for (const sheetTitle of ALL_TARGET_SHEETS) {
+        try {
+          const headerResponse = await client.spreadsheets.values.get({
+            spreadsheetId: this.spreadsheetId,
+            range: `'${sheetTitle}'!A1:M1`
+          });
+
+          const existingHeaders = headerResponse.data.values?.[0];
+          if (!existingHeaders || existingHeaders.length === 0) {
+            await client.spreadsheets.values.update({
+              spreadsheetId: this.spreadsheetId,
+              range: `'${sheetTitle}'!A1:M1`,
+              valueInputOption: 'USER_ENTERED',
+              requestBody: {
+                values: [headers]
+              }
+            });
+            logger.info(`Header kolom sheet '${sheetTitle}' berhasil diisi.`);
           }
-        });
-        logger.info('Header kolom Google Sheets berhasil diisi.');
+        } catch (err) {
+          logger.warn({ sheetTitle, err }, 'Gagal memeriksa header sheet');
+        }
       }
     } catch (error) {
-      logger.error({ error }, 'Error saat memastikan setup sheet');
+      logger.error({ error }, 'Error saat memastikan setup multi-sheet');
       throw error;
     }
   }
 
   /**
-   * Menyimpan satu transaksi baru ke baris paling bawah sheet
+   * Menyimpan satu transaksi baru ke baris paling bawah pada sheet tertentu
    */
   public async appendTransaction(
     extracted: ExtractedTransaction,
     submittedBy: string = 'Pribadi',
-    groupName: string = 'Direct Message'
+    groupName: string = 'Direct Message',
+    targetSheet: string = TARGET_SHEETS.MAKAN
   ): Promise<TransactionRecord> {
     const client = this.getClient();
     const id = generateTransactionId();
@@ -156,7 +182,7 @@ export class SheetsService {
 
     await client.spreadsheets.values.append({
       spreadsheetId: this.spreadsheetId,
-      range: `${this.transactionsSheetName}!A:M`,
+      range: `'${targetSheet}'!A:M`,
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
       requestBody: {
@@ -164,68 +190,79 @@ export class SheetsService {
       }
     });
 
+    this.lastInsertedSheet = targetSheet;
+
     const record: TransactionRecord = {
       ...extracted,
       id,
       timestamp,
       submittedBy,
-      groupName
+      groupName,
+      targetSheet
     };
 
-    logger.info({ id, nominal: extracted.amount, kategori: extracted.category, submittedBy, groupName }, 'Transaksi berhasil dicatat ke Sheets');
+    logger.info({ id, nominal: extracted.amount, kategori: extracted.category, targetSheet, submittedBy }, 'Transaksi berhasil dicatat ke Sheets');
     return record;
   }
 
   /**
-   * Mengambil seluruh baris transaksi dari Google Sheet
+   * Mengambil baris transaksi dari sheet tertentu atau dari semua sheet
    */
-  public async getAllTransactions(): Promise<TransactionRecord[]> {
+  public async getAllTransactions(targetSheet?: string): Promise<TransactionRecord[]> {
     const client = this.getClient();
 
-    const response = await client.spreadsheets.values.get({
-      spreadsheetId: this.spreadsheetId,
-      range: `${this.transactionsSheetName}!A2:M`
-    });
-
-    const rows = response.data.values || [];
+    const sheetsToQuery = targetSheet ? [targetSheet] : ALL_TARGET_SHEETS;
     const records: TransactionRecord[] = [];
 
-    rows.forEach((row, index) => {
-      if (!row || row.length < 7) return;
+    for (const sheetName of sheetsToQuery) {
+      try {
+        const response = await client.spreadsheets.values.get({
+          spreadsheetId: this.spreadsheetId,
+          range: `'${sheetName}'!A2:M`
+        });
 
-      const rawType = String(row[4] || '').toUpperCase();
-      let type: 'EXPENSE' | 'INCOME' | 'TRANSFER' = 'EXPENSE';
-      if (rawType.includes('PEMASUKAN') || rawType === 'INCOME') {
-        type = 'INCOME';
-      } else if (rawType.includes('TRANSFER')) {
-        type = 'TRANSFER';
+        const rows = response.data.values || [];
+
+        rows.forEach((row, index) => {
+          if (!row || row.length < 7) return;
+
+          const rawType = String(row[4] || '').toUpperCase();
+          let type: 'EXPENSE' | 'INCOME' | 'TRANSFER' = 'EXPENSE';
+          if (rawType.includes('PEMASUKAN') || rawType === 'INCOME') {
+            type = 'INCOME';
+          } else if (rawType.includes('TRANSFER')) {
+            type = 'TRANSFER';
+          }
+
+          const rawAmount = String(row[6] || '0').replace(/[^0-9.-]+/g, '');
+          const amount = parseFloat(rawAmount) || 0;
+
+          const normalizedDate = normalizeSheetDate(row[2]);
+          const normalizedTime = normalizeSheetTime(row[3]);
+
+          records.push({
+            id: String(row[0] || `ROW-${index + 2}`),
+            timestamp: String(row[1] || ''),
+            date: normalizedDate,
+            time: normalizedTime,
+            type,
+            category: String(row[5] || 'Lain-lain'),
+            amount,
+            source: String(row[7] || ''),
+            recipient: String(row[8] || ''),
+            notes: String(row[9] || ''),
+            submittedBy: String(row[10] || 'Pribadi'),
+            groupName: String(row[11] || 'Direct Message'),
+            targetSheet: sheetName,
+            confidence: 1.0,
+            isReceiptOrTransaction: true,
+            sheetRowIndex: index + 2
+          });
+        });
+      } catch (err) {
+        logger.warn({ sheetName, err }, 'Gagal mengambil baris dari sheet');
       }
-
-      // Bersihkan nominal dari karakter titik/koma/spasi/Rp
-      const rawAmount = String(row[6] || '0').replace(/[^0-9.-]+/g, '');
-      const amount = parseFloat(rawAmount) || 0;
-
-      const normalizedDate = normalizeSheetDate(row[2]);
-      const normalizedTime = normalizeSheetTime(row[3]);
-
-      records.push({
-        id: String(row[0] || `ROW-${index + 2}`),
-        timestamp: String(row[1] || ''),
-        date: normalizedDate,
-        time: normalizedTime,
-        type,
-        category: String(row[5] || 'Lain-lain'),
-        amount,
-        source: String(row[7] || ''),
-        recipient: String(row[8] || ''),
-        notes: String(row[9] || ''),
-        submittedBy: String(row[10] || 'Pribadi'),
-        groupName: String(row[11] || 'Direct Message'),
-        confidence: 1.0,
-        isReceiptOrTransaction: true,
-        sheetRowIndex: index + 2
-      });
-    });
+    }
 
     return records;
   }
@@ -233,17 +270,17 @@ export class SheetsService {
   /**
    * Mengambil transaksi hari ini (berdasarkan tanggal transaksi di struk)
    */
-  public async getTodayTransactions(): Promise<TransactionRecord[]> {
+  public async getTodayTransactions(targetSheet?: string): Promise<TransactionRecord[]> {
     const today = getCurrentDateISO();
-    const all = await this.getAllTransactions();
+    const all = await this.getAllTransactions(targetSheet);
     return all.filter((tx) => tx.date === today);
   }
 
   /**
    * Menghitung rekapan bulanan
    */
-  public async getMonthlySummary(year: number, month: number): Promise<MonthlySummary> {
-    const all = await this.getAllTransactions();
+  public async getMonthlySummary(year: number, month: number, targetSheet?: string): Promise<MonthlySummary> {
+    const all = await this.getAllTransactions(targetSheet);
     const monthStr = String(month).padStart(2, '0');
     const prefix = `${year}-${monthStr}`;
 
@@ -279,6 +316,7 @@ export class SheetsService {
       period: `${getIndonesianMonthName(month - 1)} ${year}`,
       year,
       month,
+      targetSheet,
       totalIncome,
       totalExpense,
       netCashflow: totalIncome - totalExpense,
@@ -291,19 +329,20 @@ export class SheetsService {
   /**
    * Menghapus baris transaksi terakhir jika user ingin membatalkan
    */
-  public async deleteLastTransaction(): Promise<boolean> {
+  public async deleteLastTransaction(targetSheet?: string): Promise<boolean> {
     const client = this.getClient();
-    const all = await this.getAllTransactions();
+    const sheetToTarget = targetSheet || this.lastInsertedSheet || TARGET_SHEETS.MAKAN;
+
+    const all = await this.getAllTransactions(sheetToTarget);
     if (all.length === 0) return false;
 
     const lastRowIndex = all.length + 1; // +1 karena ada header row 1
 
-    // Dapatkan sheetId untuk sheet Transactions
     const spreadsheet = await client.spreadsheets.get({
       spreadsheetId: this.spreadsheetId
     });
     const sheetObj = spreadsheet.data.sheets?.find(
-      (s) => s.properties?.title === this.transactionsSheetName
+      (s) => s.properties?.title === sheetToTarget
     );
     const sheetId = sheetObj?.properties?.sheetId ?? 0;
 
@@ -325,7 +364,7 @@ export class SheetsService {
       }
     });
 
-    logger.info(`Baris ${lastRowIndex} berhasil dihapus dari Google Sheets.`);
+    logger.info(`Baris ${lastRowIndex} di sheet '${sheetToTarget}' berhasil dihapus.`);
     return true;
   }
 }

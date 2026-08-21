@@ -3,6 +3,7 @@ import { GeminiService } from '../services/gemini.service.js';
 import { SheetsService } from '../services/sheets.service.js';
 import { ReporterService } from '../services/reporter.service.js';
 import { config } from '../config/env.js';
+import { parseSheetTag } from '../types/transaction.js';
 import { cleanPhoneNumber } from '../utils/formatter.js';
 import { logger } from '../utils/logger.js';
 
@@ -57,44 +58,58 @@ export class TextHandler {
         return;
       }
 
-      // 3. Perintah Laporan Bulanan
+      // 3. Perintah Laporan Bulanan (bisa spesifik per sheet atau gabungan)
       if (
-        lower === `${p}laporan` ||
-        (!isGroup && lower === 'laporan') ||
+        lower.startsWith(`${p}laporan`) ||
+        (!isGroup && lower.startsWith('laporan')) ||
         lower.includes('laporan bulan ini') ||
         lower.includes('rekap bulanan')
       ) {
-        await sock.sendMessage(chatJid, { text: '📊 *Sedang menyusun laporan keuangan...*' });
+        const { targetSheet } = parseSheetTag(text);
+        await sock.sendMessage(
+          chatJid,
+          { text: `📊 *Sedang menyusun laporan keuangan${targetSheet ? ` (${targetSheet})` : ''}...*` }
+        );
+
         const now = new Date();
         const summary = await this.sheetsService.getMonthlySummary(
           now.getFullYear(),
-          now.getMonth() + 1
+          now.getMonth() + 1,
+          targetSheet || undefined
         );
-        const reportText = this.reporterService.formatMonthlyReportMessage(summary);
+        const reportText = this.reporterService.formatMonthlyReportMessage(
+          summary,
+          targetSheet || undefined
+        );
         await sock.sendMessage(chatJid, { text: reportText }, { quoted: msg });
         return;
       }
 
-      // 4. Perintah Laporan Hari Ini
+      // 4. Perintah Laporan Hari Ini (bisa spesifik per sheet atau gabungan)
       if (
-        lower === `${p}hari-ini` ||
-        (!isGroup && lower === 'hari ini') ||
+        lower.startsWith(`${p}hari-ini`) ||
+        (!isGroup && lower.startsWith('hari ini')) ||
         lower.includes('pengeluaran hari ini') ||
         lower.includes('transaksi hari ini')
       ) {
-        const todayTxs = await this.sheetsService.getTodayTransactions();
-        const reportText = this.reporterService.formatTodayReportMessage(todayTxs);
+        const { targetSheet } = parseSheetTag(text);
+        const todayTxs = await this.sheetsService.getTodayTransactions(targetSheet || undefined);
+        const reportText = this.reporterService.formatTodayReportMessage(
+          todayTxs,
+          targetSheet || undefined
+        );
         await sock.sendMessage(chatJid, { text: reportText }, { quoted: msg });
         return;
       }
 
       // 5. Perintah Batal / Undo
-      if (lower === `${p}batal` || lower === `${p}undo` || (!isGroup && lower === 'batal')) {
-        const success = await this.sheetsService.deleteLastTransaction();
+      if (lower.startsWith(`${p}batal`) || lower.startsWith(`${p}undo`) || (!isGroup && lower.startsWith('batal'))) {
+        const { targetSheet } = parseSheetTag(text);
+        const success = await this.sheetsService.deleteLastTransaction(targetSheet || undefined);
         if (success) {
           await sock.sendMessage(
             chatJid,
-            { text: '🗑️ *Catatan transaksi terakhir berhasil dibatalkan dan dihapus dari spreadsheet.*' },
+            { text: `🗑️ *Catatan transaksi terakhir${targetSheet ? ` pada sheet '${targetSheet}'` : ''} berhasil dibatalkan dan dihapus.*` },
             { quoted: msg }
           );
         } else {
@@ -113,17 +128,38 @@ export class TextHandler {
         await sock.sendMessage(
           chatJid,
           {
-            text: `📊 *Google Spreadsheet Keuangan:*\n\n🔗 ${sheetUrl}`
+            text: `📊 *Google Spreadsheet Keuangan (5 Sheet):*\n\n🔗 ${sheetUrl}`
           },
           { quoted: msg }
         );
         return;
       }
 
-      // 7. Coba ekstraksi sebagai transaksi manual lewat AI (cth: "makan soto 25rb cash")
-      const shouldTryExtract =
-        !isGroup ||
-        text.startsWith(p) ||
+      // 7. Coba ekstraksi sebagai transaksi manual lewat AI (cth: "makan soto 25rb cash .makan")
+      const { targetSheet, cleanText } = parseSheetTag(text);
+
+      if (targetSheet) {
+        // Tag sheet valid ditemukan ➔ Proses ekstraksi
+        const inputForAI = cleanText.startsWith(p) ? cleanText.slice(p.length) : cleanText;
+        const extracted = await this.geminiService.extractFromText(inputForAI);
+        if (extracted) {
+          const submittedBy = senderName
+            ? `${senderName} (${cleanPhoneNumber(senderJid)})`
+            : cleanPhoneNumber(senderJid);
+          const record = await this.sheetsService.appendTransaction(
+            extracted,
+            submittedBy,
+            groupName,
+            targetSheet
+          );
+          const replyMessage = this.reporterService.formatTransactionSavedMessage(record);
+          await sock.sendMessage(chatJid, { text: replyMessage }, { quoted: msg });
+          return;
+        }
+      }
+
+      // 8. Jika input berupa transaksi tapi lupa menyertakan tag
+      const looksLikeTransaction =
         lower.startsWith('catat') ||
         lower.startsWith('beli') ||
         lower.startsWith('bayar') ||
@@ -132,29 +168,21 @@ export class TextHandler {
         lower.startsWith('isi bensin') ||
         lower.startsWith('transfer') ||
         lower.startsWith('gaji') ||
-        lower.includes('rb') ||
-        lower.includes('k') ||
-        lower.includes('jt');
+        lower.startsWith('nabung') ||
+        /\b\d+\s*(?:rb|ribu|k|jt|juta)\b/i.test(text);
 
-      if (shouldTryExtract) {
-        const cleanInput = text.startsWith(p) ? text.slice(p.length) : text;
-        const extracted = await this.geminiService.extractFromText(cleanInput);
-        if (extracted) {
-          const submittedBy = senderName
-            ? `${senderName} (${cleanPhoneNumber(senderJid)})`
-            : cleanPhoneNumber(senderJid);
-          const record = await this.sheetsService.appendTransaction(
-            extracted,
-            submittedBy,
-            groupName
-          );
-          const replyMessage = this.reporterService.formatTransactionSavedMessage(record);
-          await sock.sendMessage(chatJid, { text: replyMessage }, { quoted: msg });
-          return;
-        }
+      if (looksLikeTransaction && !targetSheet) {
+        await sock.sendMessage(
+          chatJid,
+          {
+            text: `⚠️ *MOHON SERTAKAN TAG SHEET DI AKHIR PESAN*\n\nContoh:\n• _"${text} .makan"_\n• _"${text} .istri"_\n• _"${text} .suami"_\n• _"${text} .belanja"_\n• _"${text} .tabungan"_`
+          },
+          { quoted: msg }
+        );
+        return;
       }
 
-      // 8. Jika berupa pertanyaan umum tentang keuangan/budgeting di DM
+      // 9. Jika berupa pertanyaan umum tentang keuangan di DM
       if (!isGroup && text.length > 5 && (lower.includes('?') || lower.includes('bagaimana') || lower.includes('apakah') || lower.includes('tips') || lower.includes('saran') || lower.includes('analisis'))) {
         const now = new Date();
         const summary = await this.sheetsService.getMonthlySummary(
@@ -167,12 +195,12 @@ export class TextHandler {
         return;
       }
 
-      // 9. Jika di DM dan pesan tidak dikenali -> berikan petunjuk singkat (Jangan respon di grup agar tidak spam)
+      // 10. Default DM handler
       if (!isGroup) {
         await sock.sendMessage(
           chatJid,
           {
-            text: `🤖 Kirim foto struk/screenshot transfer, ketik catatan transaksi (cth: _"Beli kopi 25rb cash"_), atau ketik *${p}bantuan* untuk melihat daftar perintah.`
+            text: `🤖 Kirim foto struk dengan caption tag (cth: \`.makan\`), ketik catatan transaksi (cth: _"Makan soto 25rb .makan"_), atau ketik *${p}bantuan* untuk panduan lengkap.`
           },
           { quoted: msg }
         );

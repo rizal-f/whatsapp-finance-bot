@@ -2,6 +2,7 @@ import { WAMessage, WASocket, downloadMediaMessage } from '@whiskeysockets/baile
 import { GeminiService } from '../services/gemini.service.js';
 import { SheetsService } from '../services/sheets.service.js';
 import { ReporterService } from '../services/reporter.service.js';
+import { parseSheetTag } from '../types/transaction.js';
 import { cleanPhoneNumber } from '../utils/formatter.js';
 import { logger } from '../utils/logger.js';
 
@@ -21,16 +22,42 @@ export class ImageHandler {
     groupName: string = 'Direct Message'
   ): Promise<void> {
     try {
-      // 1. Beri respon awal bahwa gambar sedang dianalisis
+      const rawMsg = msg.message;
+      const inner =
+        rawMsg?.viewOnceMessage?.message ||
+        rawMsg?.viewOnceMessageV2?.message ||
+        rawMsg?.ephemeralMessage?.message ||
+        rawMsg;
+
+      const caption = (
+        inner?.imageMessage?.caption ||
+        inner?.documentMessage?.caption ||
+        ''
+      ).trim();
+
+      // 1. Validasi Wajib Tag Sufiks pada Caption Foto
+      const { targetSheet } = parseSheetTag(caption);
+
+      if (!targetSheet) {
+        logger.info({ senderName, chatJid, caption }, 'Foto struk ditolak: Tidak memiliki caption tag sheet yang valid');
+        await sock.sendMessage(
+          chatJid,
+          { text: this.reporterService.formatMissingTagErrorMessage() },
+          { quoted: msg }
+        );
+        return;
+      }
+
+      // 2. Beri respon awal bahwa gambar sedang dianalisis
       await sock.sendMessage(
         chatJid,
         {
-          text: '⏳ *Sedang membaca struk / bukti transaksi...*\n_Mohon tunggu sebentar ya..._'
+          text: `⏳ *Sedang membaca struk untuk Sheet '${targetSheet}'...*\n_Mohon tunggu sebentar ya..._`
         },
         { quoted: msg }
       );
 
-      // 2. Download buffer gambar dari WhatsApp
+      // 3. Download buffer gambar dari WhatsApp
       const buffer = (await downloadMediaMessage(
         msg,
         'buffer',
@@ -52,20 +79,12 @@ export class ImageHandler {
         return;
       }
 
-      // Deteksi mime type
-      const rawMsg = msg.message;
-      const inner =
-        rawMsg?.viewOnceMessage?.message ||
-        rawMsg?.viewOnceMessageV2?.message ||
-        rawMsg?.ephemeralMessage?.message ||
-        rawMsg;
-
       const mimeType =
         inner?.imageMessage?.mimetype ||
         inner?.documentMessage?.mimetype ||
         'image/jpeg';
 
-      // 3. Ekstrak data transaksi dengan Gemini Vision AI
+      // 4. Ekstrak data transaksi dengan Gemini Vision AI
       const extracted = await this.geminiService.extractFromImage(buffer, mimeType);
 
       if (!extracted) {
@@ -79,11 +98,11 @@ export class ImageHandler {
         return;
       }
 
-      // 4. Simpan ke Google Spreadsheet
+      // 5. Simpan ke Google Spreadsheet pada Tab Sheet yang Dituju
       const submittedBy = senderName ? `${senderName} (${cleanPhoneNumber(senderJid)})` : cleanPhoneNumber(senderJid);
-      const record = await this.sheetsService.appendTransaction(extracted, submittedBy, groupName);
+      const record = await this.sheetsService.appendTransaction(extracted, submittedBy, groupName, targetSheet);
 
-      // 5. Kirim konfirmasi hasil pencatatan
+      // 6. Kirim konfirmasi hasil pencatatan
       const replyMessage = this.reporterService.formatTransactionSavedMessage(record);
       await sock.sendMessage(chatJid, { text: replyMessage }, { quoted: msg });
     } catch (error: any) {
