@@ -2,7 +2,7 @@ import { google, sheets_v4 } from 'googleapis';
 import { config } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { TransactionRecord, ExtractedTransaction, MonthlySummary, CategorySummary } from '../types/transaction.js';
-import { generateTransactionId, getIndonesianMonthName, getCurrentDateISO } from '../utils/formatter.js';
+import { generateTransactionId, getIndonesianMonthName, getCurrentDateISO, normalizeSheetDate, normalizeSheetTime } from '../utils/formatter.js';
 
 export class SheetsService {
   private sheets: sheets_v4.Sheets | null = null;
@@ -184,7 +184,7 @@ export class SheetsService {
 
     const response = await client.spreadsheets.values.get({
       spreadsheetId: this.spreadsheetId,
-      range: `${this.transactionsSheetName}!A2:K`
+      range: `${this.transactionsSheetName}!A2:M`
     });
 
     const rows = response.data.values || [];
@@ -205,17 +205,22 @@ export class SheetsService {
       const rawAmount = String(row[6] || '0').replace(/[^0-9.-]+/g, '');
       const amount = parseFloat(rawAmount) || 0;
 
+      const normalizedDate = normalizeSheetDate(row[2]);
+      const normalizedTime = normalizeSheetTime(row[3]);
+
       records.push({
         id: String(row[0] || `ROW-${index + 2}`),
         timestamp: String(row[1] || ''),
-        date: String(row[2] || ''),
-        time: String(row[3] || ''),
+        date: normalizedDate,
+        time: normalizedTime,
         type,
         category: String(row[5] || 'Lain-lain'),
         amount,
         source: String(row[7] || ''),
         recipient: String(row[8] || ''),
         notes: String(row[9] || ''),
+        submittedBy: String(row[10] || 'Pribadi'),
+        groupName: String(row[11] || 'Direct Message'),
         confidence: 1.0,
         isReceiptOrTransaction: true,
         sheetRowIndex: index + 2
