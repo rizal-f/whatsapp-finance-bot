@@ -231,12 +231,16 @@ export class SheetsService {
   }
 
   /**
-   * Mengambil transaksi hari ini
+   * Mengambil transaksi hari ini (baik berdasarkan tanggal struk hari ini atau yang diinput hari ini)
    */
   public async getTodayTransactions(): Promise<TransactionRecord[]> {
     const today = getCurrentDateISO();
     const all = await this.getAllTransactions();
-    return all.filter((tx) => tx.date === today);
+    return all.filter((tx) => {
+      if (tx.date === today) return true;
+      const inputDate = normalizeSheetDate(tx.timestamp.split(',')[0]);
+      return inputDate === today;
+    });
   }
 
   /**
