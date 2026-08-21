@@ -6,6 +6,8 @@ import {
   ExtractedTransaction,
   MonthlySummary,
   CategorySummary,
+  SheetSummaryItem,
+  ComprehensiveMonthlySummary,
   ALL_TARGET_SHEETS,
   TARGET_SHEETS,
   TargetSheetName
@@ -323,6 +325,87 @@ export class SheetsService {
       totalTransactions: monthTransactions.length,
       categoryBreakdown,
       recentTransactions: monthTransactions.slice(-5).reverse()
+    };
+  }
+
+  /**
+   * Menghitung rekapan komprehensif seluruh 5 sheet untuk laporan keuangan keluarga
+   */
+  public async getComprehensiveMonthlySummary(
+    year: number,
+    month: number
+  ): Promise<ComprehensiveMonthlySummary> {
+    const monthStr = String(month).padStart(2, '0');
+    const prefix = `${year}-${monthStr}`;
+
+    const sheetsBreakdown: SheetSummaryItem[] = [];
+    const allMonthTransactions: TransactionRecord[] = [];
+    let grandTotalIncome = 0;
+    let grandTotalExpense = 0;
+    let grandTotalSavings = 0;
+    const categoryMap: Record<string, { total: number; count: number }> = {};
+
+    for (const sheetName of ALL_TARGET_SHEETS) {
+      const sheetTxs = await this.getAllTransactions(sheetName);
+      const filtered = sheetTxs.filter((tx) => tx.date.startsWith(prefix));
+
+      let sheetIncome = 0;
+      let sheetExpense = 0;
+
+      for (const tx of filtered) {
+        allMonthTransactions.push(tx);
+
+        if (tx.type === 'INCOME') {
+          sheetIncome += tx.amount;
+        } else if (tx.type === 'EXPENSE' || tx.type === 'TRANSFER') {
+          sheetExpense += tx.amount;
+
+          // Hitung breakdown kategori
+          if (!categoryMap[tx.category]) {
+            categoryMap[tx.category] = { total: 0, count: 0 };
+          }
+          categoryMap[tx.category].total += tx.amount;
+          categoryMap[tx.category].count += 1;
+        }
+      }
+
+      if (sheetName === TARGET_SHEETS.TABUNGAN) {
+        grandTotalSavings += sheetIncome + sheetExpense;
+      } else {
+        grandTotalIncome += sheetIncome;
+        grandTotalExpense += sheetExpense;
+      }
+
+      sheetsBreakdown.push({
+        sheetName,
+        totalIncome: sheetIncome,
+        totalExpense: sheetExpense,
+        netCashflow: sheetIncome - sheetExpense,
+        totalTransactions: filtered.length
+      });
+    }
+
+    const categoryBreakdown: CategorySummary[] = Object.entries(categoryMap)
+      .map(([category, data]) => ({
+        category,
+        total: data.total,
+        count: data.count,
+        percentage: grandTotalExpense > 0 ? (data.total / grandTotalExpense) * 100 : 0
+      }))
+      .sort((a, b) => b.total - a.total);
+
+    return {
+      period: `${getIndonesianMonthName(month - 1)} ${year}`,
+      year,
+      month,
+      grandTotalIncome,
+      grandTotalExpense,
+      grandTotalSavings,
+      grandNetCashflow: grandTotalIncome - grandTotalExpense - grandTotalSavings,
+      grandTotalTransactions: allMonthTransactions.length,
+      sheetsBreakdown,
+      categoryBreakdown,
+      recentTransactions: allMonthTransactions.slice(-5).reverse()
     };
   }
 

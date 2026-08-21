@@ -58,7 +58,7 @@ export class TextHandler {
         return;
       }
 
-      // 3. Perintah Laporan Bulanan (bisa spesifik per sheet atau gabungan)
+      // 3. Perintah Laporan Bulanan (bisa spesifik per sheet atau laporan komprehensif keluarga)
       if (
         lower.startsWith(`${p}laporan`) ||
         (!isGroup && lower.startsWith('laporan')) ||
@@ -66,22 +66,47 @@ export class TextHandler {
         lower.includes('rekap bulanan')
       ) {
         const { targetSheet } = parseSheetTag(text);
-        await sock.sendMessage(
-          chatJid,
-          { text: `📊 *Sedang menyusun laporan keuangan${targetSheet ? ` (${targetSheet})` : ''}...*` }
-        );
-
         const now = new Date();
-        const summary = await this.sheetsService.getMonthlySummary(
-          now.getFullYear(),
-          now.getMonth() + 1,
-          targetSheet || undefined
-        );
-        const reportText = this.reporterService.formatMonthlyReportMessage(
-          summary,
-          targetSheet || undefined
-        );
-        await sock.sendMessage(chatJid, { text: reportText }, { quoted: msg });
+
+        if (targetSheet) {
+          // Laporan untuk Sheet Spesifik
+          await sock.sendMessage(
+            chatJid,
+            { text: `📊 *Sedang menyusun laporan sheet '${targetSheet}' & analisis AI...*` }
+          );
+
+          const summary = await this.sheetsService.getMonthlySummary(
+            now.getFullYear(),
+            now.getMonth() + 1,
+            targetSheet
+          );
+          const aiAnalysis = await this.geminiService.generateSingleSheetAnalysis(summary, targetSheet);
+          const reportText = this.reporterService.formatMonthlyReportMessage(
+            summary,
+            targetSheet,
+            aiAnalysis
+          );
+          await sock.sendMessage(chatJid, { text: reportText }, { quoted: msg });
+        } else {
+          // Laporan Komprehensif Seluruh Sheet Keluarga
+          await sock.sendMessage(
+            chatJid,
+            { text: '📊 *Sedang menyusun laporan keuangan keluarga & analisis AI...*' }
+          );
+
+          const comprehensiveSummary = await this.sheetsService.getComprehensiveMonthlySummary(
+            now.getFullYear(),
+            now.getMonth() + 1
+          );
+          const aiAnalysis = await this.geminiService.generateMonthlyCashflowAnalysis(
+            comprehensiveSummary
+          );
+          const reportText = this.reporterService.formatComprehensiveMonthlyReportMessage(
+            comprehensiveSummary,
+            aiAnalysis
+          );
+          await sock.sendMessage(chatJid, { text: reportText }, { quoted: msg });
+        }
         return;
       }
 

@@ -142,3 +142,25 @@ export interface MonthlySummary {
   categoryBreakdown: CategorySummary[];
   recentTransactions: TransactionRecord[];
 }
+
+export interface SheetSummaryItem {
+  sheetName: string;
+  totalIncome: number;
+  totalExpense: number;
+  netCashflow: number;
+  totalTransactions: number;
+}
+
+export interface ComprehensiveMonthlySummary {
+  period: string; // e.g. "Agustus 2026"
+  year: number;
+  month: number;
+  grandTotalIncome: number;
+  grandTotalExpense: number;
+  grandTotalSavings: number;
+  grandNetCashflow: number;
+  grandTotalTransactions: number;
+  sheetsBreakdown: SheetSummaryItem[];
+  categoryBreakdown: CategorySummary[];
+  recentTransactions: TransactionRecord[];
+}

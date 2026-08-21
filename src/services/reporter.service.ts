@@ -1,4 +1,4 @@
-import { TransactionRecord, MonthlySummary } from '../types/transaction.js';
+import { TransactionRecord, MonthlySummary, ComprehensiveMonthlySummary } from '../types/transaction.js';
 import { formatRupiah, formatDateIndonesian } from '../utils/formatter.js';
 import { config } from '../config/env.js';
 
@@ -31,9 +31,87 @@ _Ketik *${config.commandPrefix}batal* dalam 2 menit jika ingin membatalkan trans
   }
 
   /**
-   * Format pesan ringkasan bulanan lengkap (per sheet atau gabungan)
+   * Format laporan keuangan komprehensif seluruh 5 sheet dengan rincian per pos & analisis AI
    */
-  public formatMonthlyReportMessage(summary: MonthlySummary, targetSheet?: string): string {
+  public formatComprehensiveMonthlyReportMessage(
+    summary: ComprehensiveMonthlySummary,
+    aiAnalysis?: string
+  ): string {
+    const cashflowSign = summary.grandNetCashflow >= 0 ? '🟢' : '🔴';
+
+    // Rincian per sheet
+    const sheetsText = summary.sheetsBreakdown
+      .map((s) => {
+        let icon = '📁';
+        if (s.sheetName.includes('Istri')) icon = '👩';
+        else if (s.sheetName.includes('Suami')) icon = '👨';
+        else if (s.sheetName.includes('Makan')) icon = '🍲';
+        else if (s.sheetName.includes('Belanja')) icon = '🛒';
+        else if (s.sheetName.includes('Tabungan')) icon = '💰';
+
+        if (s.sheetName.includes('Tabungan')) {
+          return `${icon} *${s.sheetName}:*
+   └ 📥 Disimpan: *${formatRupiah(s.totalIncome + s.totalExpense)}* _[${s.totalTransactions}x]_`;
+        }
+
+        return `${icon} *${s.sheetName}:*
+   ├ 🟢 Masuk : ${formatRupiah(s.totalIncome)}
+   ├ 🔴 Keluar: ${formatRupiah(s.totalExpense)}
+   └ 📊 Sisa  : *${formatRupiah(s.netCashflow)}* _[${s.totalTransactions}x]_`;
+      })
+      .join('\n\n');
+
+    // Rincian kategori pengeluaran terbesar
+    let categoryText = '';
+    if (summary.categoryBreakdown.length > 0) {
+      categoryText = summary.categoryBreakdown
+        .slice(0, 5)
+        .map((cat, idx) => {
+          const bar = this.generateProgressBar(cat.percentage);
+          return `${idx + 1}. *${cat.category}*\n   ├ 💰 ${formatRupiah(cat.total)} (${cat.percentage.toFixed(1)}%)\n   └ 📊 ${bar} _[${cat.count}x]_`;
+        })
+        .join('\n\n');
+    } else {
+      categoryText = '_Belum ada data pengeluaran di periode ini._';
+    }
+
+    const aiBlock = aiAnalysis
+      ? `\n━━━━━━━━━━━━━━━━━━━━\n🤖 *ANALISIS & SARAN KEUANGAN KELUARGA:*\n\n${aiAnalysis}\n`
+      : '';
+
+    return `📊 *LAPORAN KEUANGAN KELUARGA*
+📅 *Periode:* ${summary.period.toUpperCase()}
+━━━━━━━━━━━━━━━━━━━━
+
+📑 *RINCIAN KEUANGAN PER SHEET:*
+
+${sheetsText}
+
+━━━━━━━━━━━━━━━━━━━━
+📈 *TOTAL GABUNGAN KELUARGA:*
+💵 *Total Pemasukan:*  ${formatRupiah(summary.grandTotalIncome)}
+💸 *Total Pengeluaran:* ${formatRupiah(summary.grandTotalExpense)}
+🏦 *Total Tabungan:*    ${formatRupiah(summary.grandTotalSavings)}
+${cashflowSign} *Sisa Arus Kas:*     ${formatRupiah(summary.grandNetCashflow)}
+🔢 *Total Transaksi:*    ${summary.grandTotalTransactions} transaksi
+
+━━━━━━━━━━━━━━━━━━━━
+🏷️ *Top 5 Kategori Pengeluaran:*
+
+${categoryText}
+${aiBlock}━━━━━━━━━━━━━━━━━━━━
+💡 _Gunakan perintah seperti *${config.commandPrefix}laporan .istri* atau *${config.commandPrefix}laporan .belanja* untuk rincian sheet tertentu._
+🌐 _Data tersinkron otomatis ke Google Sheets._`;
+  }
+
+  /**
+   * Format pesan ringkasan bulanan untuk sheet tertentu
+   */
+  public formatMonthlyReportMessage(
+    summary: MonthlySummary,
+    targetSheet?: string,
+    aiAnalysis?: string
+  ): string {
     const cashflowSign = summary.netCashflow >= 0 ? '🟢' : '🔴';
     const sheetHeader = targetSheet ? targetSheet.toUpperCase() : 'SEMUA SHEET';
 
@@ -49,6 +127,10 @@ _Ketik *${config.commandPrefix}batal* dalam 2 menit jika ingin membatalkan trans
       categoryText = '_Belum ada data pengeluaran di periode ini._';
     }
 
+    const aiBlock = aiAnalysis
+      ? `\n━━━━━━━━━━━━━━━━━━━━\n🤖 *ANALISIS & SARAN AI:*\n\n${aiAnalysis}\n`
+      : '';
+
     return `📊 *LAPORAN KEUANGAN: ${sheetHeader}*
 📅 *Periode:* ${summary.period.toUpperCase()}
 ━━━━━━━━━━━━━━━━━━━━
@@ -62,8 +144,7 @@ ${cashflowSign} *Arus Kas Bersih:*   ${formatRupiah(summary.netCashflow)}
 🏷️ *Rincian Pengeluaran per Kategori:*
 
 ${categoryText}
-
-━━━━━━━━━━━━━━━━━━━━
+${aiBlock}━━━━━━━━━━━━━━━━━━━━
 💡 _Gunakan tag spesifik seperti *${config.commandPrefix}laporan .istri* atau *${config.commandPrefix}laporan .belanja*_
 🌐 _Data tersinkron otomatis ke Google Sheets._`;
   }

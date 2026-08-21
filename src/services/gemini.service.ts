@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import { config } from '../config/env.js';
 import { logger } from '../utils/logger.js';
-import { ExtractedTransaction, ExtractedTransactionSchema } from '../types/transaction.js';
+import { ExtractedTransaction, ExtractedTransactionSchema, ComprehensiveMonthlySummary, MonthlySummary } from '../types/transaction.js';
 import { getCurrentDateISO, getCurrentTimeFormatted } from '../utils/formatter.js';
 
 export class GeminiService {
@@ -210,6 +210,83 @@ Instruksi:
     } catch (error: any) {
       logger.error({ error: error.message || error }, 'Error saat generate financial advice Gemini');
       return 'Terjadi kendala saat menganalisis data keuangan Anda.';
+    }
+  }
+
+  /**
+   * Menghasilkan analisis kesehatan cashflow dan saran praktis untuk laporan bulanan gabungan
+   */
+  public async generateMonthlyCashflowAnalysis(
+    summary: ComprehensiveMonthlySummary
+  ): Promise<string> {
+    const prompt = `
+Anda adalah seorang Financial Advisor Keluarga yang ramah, ringkas, dan solutif.
+Berikut adalah rekap keuangan keluarga bulan ${summary.period}:
+
+DATA RINGKASAN:
+- Total Pemasukan: Rp ${summary.grandTotalIncome.toLocaleString('id-ID')}
+- Total Pengeluaran: Rp ${summary.grandTotalExpense.toLocaleString('id-ID')}
+- Total Tabungan: Rp ${summary.grandTotalSavings.toLocaleString('id-ID')}
+- Sisa Saldo Arus Kas: Rp ${summary.grandNetCashflow.toLocaleString('id-ID')}
+
+RINCIAN PER SHEET / POS KEUANGAN:
+${summary.sheetsBreakdown
+  .map(
+    (s) =>
+      `• ${s.sheetName}: Masuk Rp ${s.totalIncome.toLocaleString('id-ID')} | Keluar Rp ${s.totalExpense.toLocaleString('id-ID')} | Sisa Rp ${s.netCashflow.toLocaleString('id-ID')}`
+  )
+  .join('\n')}
+
+TOP 3 KATEGORI PENGELUARAN TERBESAR:
+${summary.categoryBreakdown
+  .slice(0, 3)
+  .map((c) => `• ${c.category}: Rp ${c.total.toLocaleString('id-ID')} (${c.percentage.toFixed(1)}%)`)
+  .join('\n') || '- Belum ada pengeluaran'}
+
+TUGAS:
+Berikan analisis kesehatan keuangan dan saran singkat padat (maksimal 3 poin ringkas) dalam format WhatsApp yang enak dibaca:
+1. 💡 *Kesehatan Cashflow:* (Beri status: SEHAT / WASPADA / PERLU EVALUASI dan rasio tabungan jika ada).
+2. 🔍 *Insight Utama:* (Soroti pos/sheet mana yang menyerap dana paling banyak).
+3. 🎯 *Saran Aksi Finansial:* (Beri 1-2 rekomendasi budgeting realistis untuk sisa bulan ini atau bulan depan).
+
+Gunakan bahasa Indonesia yang ramah, santun, dan memotivasi. Jaga agar tidak terlalu panjang.
+`;
+
+    try {
+      const model = this.getModel(false);
+      const result = await model.generateContent(prompt);
+      return result.response.text().trim();
+    } catch (error: any) {
+      logger.error({ error }, 'Gagal menghasilkan analisis cashflow AI');
+      return '💡 *Kesehatan Cashflow:* Catatan keuangan telah tersimpan dengan rapi. Terus pertahankan kedisiplinan mencatat keuangan harian keluarga!';
+    }
+  }
+
+  /**
+   * Menghasilkan analisis singkat untuk laporan sheet tunggal
+   */
+  public async generateSingleSheetAnalysis(
+    summary: MonthlySummary,
+    sheetName: string
+  ): Promise<string> {
+    const prompt = `
+Anda adalah Financial Planner profesional.
+Analisis data transaksi untuk sheet "${sheetName}" bulan ${summary.period}:
+- Total Pemasukan: Rp ${summary.totalIncome.toLocaleString('id-ID')}
+- Total Pengeluaran: Rp ${summary.totalExpense.toLocaleString('id-ID')}
+- Arus Kas Bersih: Rp ${summary.netCashflow.toLocaleString('id-ID')}
+- Top Kategori: ${summary.categoryBreakdown.slice(0, 3).map((c) => `${c.category} (${c.percentage.toFixed(1)}%)`).join(', ') || 'Belum ada'}
+
+Berikan 1-2 kalimat analisa singkat dan 1 saran praktis untuk sheet ini. Format rapi WhatsApp dengan emoji.
+`;
+
+    try {
+      const model = this.getModel(false);
+      const result = await model.generateContent(prompt);
+      return result.response.text().trim();
+    } catch (error: any) {
+      logger.error({ error }, 'Gagal menghasilkan single sheet analysis');
+      return '';
     }
   }
 }
