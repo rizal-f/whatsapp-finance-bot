@@ -39,7 +39,7 @@ _Ketik *${config.commandPrefix}batal* dalam 2 menit jika ingin membatalkan trans
   ): string {
     const cashflowSign = summary.grandNetCashflow >= 0 ? '🟢' : '🔴';
 
-    // Rincian per sheet
+    // Rincian per sheet (Semua 5 sheet disamakan formatnya)
     const sheetsText = summary.sheetsBreakdown
       .map((s) => {
         let icon = '📁';
@@ -48,11 +48,6 @@ _Ketik *${config.commandPrefix}batal* dalam 2 menit jika ingin membatalkan trans
         else if (s.sheetName.includes('Makan')) icon = '🍲';
         else if (s.sheetName.includes('Belanja')) icon = '🛒';
         else if (s.sheetName.includes('Tabungan')) icon = '💰';
-
-        if (s.sheetName.includes('Tabungan')) {
-          return `${icon} *${s.sheetName}:*
-   └ 📥 Disimpan: *${formatRupiah(s.totalIncome + s.totalExpense)}* _[${s.totalTransactions}x]_`;
-        }
 
         return `${icon} *${s.sheetName}:*
    ├ 🟢 Masuk : ${formatRupiah(s.totalIncome)}
@@ -91,7 +86,6 @@ ${sheetsText}
 📈 *TOTAL GABUNGAN KELUARGA:*
 💵 *Total Pemasukan:*  ${formatRupiah(summary.grandTotalIncome)}
 💸 *Total Pengeluaran:* ${formatRupiah(summary.grandTotalExpense)}
-🏦 *Total Tabungan:*    ${formatRupiah(summary.grandTotalSavings)}
 ${cashflowSign} *Sisa Arus Kas:*     ${formatRupiah(summary.grandNetCashflow)}
 🔢 *Total Transaksi:*    ${summary.grandTotalTransactions} transaksi
 

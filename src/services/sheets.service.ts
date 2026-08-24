@@ -369,12 +369,9 @@ export class SheetsService {
         }
       }
 
-      if (sheetName === TARGET_SHEETS.TABUNGAN) {
-        grandTotalSavings += sheetIncome + sheetExpense;
-      } else {
-        grandTotalIncome += sheetIncome;
-        grandTotalExpense += sheetExpense;
-      }
+      // Semua 5 sheet (termasuk Tabungan) diperlakukan sama dan konsisten
+      grandTotalIncome += sheetIncome;
+      grandTotalExpense += sheetExpense;
 
       sheetsBreakdown.push({
         sheetName,
@@ -400,8 +397,8 @@ export class SheetsService {
       month,
       grandTotalIncome,
       grandTotalExpense,
-      grandTotalSavings,
-      grandNetCashflow: grandTotalIncome - grandTotalExpense - grandTotalSavings,
+      grandTotalSavings: 0,
+      grandNetCashflow: grandTotalIncome - grandTotalExpense,
       grandTotalTransactions: allMonthTransactions.length,
       sheetsBreakdown,
       categoryBreakdown,

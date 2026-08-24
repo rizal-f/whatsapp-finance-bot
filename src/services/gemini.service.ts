@@ -226,7 +226,6 @@ Berikut adalah rekap keuangan keluarga bulan ${summary.period}:
 DATA RINGKASAN:
 - Total Pemasukan: Rp ${summary.grandTotalIncome.toLocaleString('id-ID')}
 - Total Pengeluaran: Rp ${summary.grandTotalExpense.toLocaleString('id-ID')}
-- Total Tabungan: Rp ${summary.grandTotalSavings.toLocaleString('id-ID')}
 - Sisa Saldo Arus Kas: Rp ${summary.grandNetCashflow.toLocaleString('id-ID')}
 
 RINCIAN PER SHEET / POS KEUANGAN:
