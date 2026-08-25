@@ -58,7 +58,7 @@ function parseAllowedGroups(raw?: string): string[] {
 export const config: AppConfig = {
   port: parseInt(process.env.PORT || '8000', 10),
   geminiApiKey: process.env.GEMINI_API_KEY || '',
-  geminiModel: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
   spreadsheetId: process.env.SPREADSHEET_ID || '',
   googleCredentialsPath: resolveGoogleCredentials(),
   googleCredentialsJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_CREDENTIALS_JSON || '',
