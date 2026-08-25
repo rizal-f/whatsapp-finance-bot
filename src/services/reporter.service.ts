@@ -1,4 +1,10 @@
-import { TransactionRecord, MonthlySummary, ComprehensiveMonthlySummary } from '../types/transaction.js';
+import {
+  TransactionRecord,
+  MonthlySummary,
+  ComprehensiveMonthlySummary,
+  IstriMonthlySummary,
+  IstriPocketSummary
+} from '../types/transaction.js';
 import { formatRupiah, formatDateIndonesian } from '../utils/formatter.js';
 import { config } from '../config/env.js';
 
@@ -39,7 +45,7 @@ _Ketik *${config.commandPrefix}batal* dalam 2 menit jika ingin membatalkan trans
   ): string {
     const cashflowSign = summary.grandNetCashflow >= 0 ? '🟢' : '🔴';
 
-    // Rincian per sheet (Semua 5 sheet disamakan formatnya)
+    // Rincian per sheet
     const sheetsText = summary.sheetsBreakdown
       .map((s) => {
         let icon = '📁';
@@ -48,6 +54,28 @@ _Ketik *${config.commandPrefix}batal* dalam 2 menit jika ingin membatalkan trans
         else if (s.sheetName.includes('Makan')) icon = '🍲';
         else if (s.sheetName.includes('Belanja')) icon = '🛒';
         else if (s.sheetName.includes('Tabungan')) icon = '💰';
+
+        if (s.sheetName.includes('Istri') && s.istriPockets && s.istriPockets.length > 0) {
+          const pocketIcons: Record<string, string> = {
+            Jajan: '🍔',
+            Skincare: '💄',
+            Bensin: '⛽',
+            Darurat: '🚨'
+          };
+
+          const pocketDetails = s.istriPockets
+            .map((p) => {
+              const pIcon = pocketIcons[p.category] || '•';
+              return `   ├ ${pIcon} *${p.category}:* Masuk ${formatRupiah(p.totalIncome)} | Keluar ${formatRupiah(p.totalExpense)} | Sisa *${formatRupiah(p.netCashflow)}*`;
+            })
+            .join('\n');
+
+          return `${icon} *${s.sheetName}:*
+${pocketDetails}
+   ├ 🟢 Total Masuk : ${formatRupiah(s.totalIncome)}
+   ├ 🔴 Total Keluar: ${formatRupiah(s.totalExpense)}
+   └ 📊 Total Sisa  : *${formatRupiah(s.netCashflow)}* _[${s.totalTransactions}x]_`;
+        }
 
         return `${icon} *${s.sheetName}:*
    ├ 🟢 Masuk : ${formatRupiah(s.totalIncome)}
@@ -95,6 +123,55 @@ ${cashflowSign} *Sisa Arus Kas:*     ${formatRupiah(summary.grandNetCashflow)}
 ${categoryText}
 ${aiBlock}━━━━━━━━━━━━━━━━━━━━
 💡 _Gunakan perintah seperti *${config.commandPrefix}laporan .istri* atau *${config.commandPrefix}laporan .belanja* untuk rincian sheet tertentu._
+🌐 _Data tersinkron otomatis ke Google Sheets._`;
+  }
+
+  /**
+   * Format laporan khusus Transaksi Istri dengan rincian 4 pos kategori
+   */
+  public formatIstriMonthlyReportMessage(
+    summary: IstriMonthlySummary,
+    aiAnalysis?: string
+  ): string {
+    const cashflowSign = summary.netCashflow >= 0 ? '🟢' : '🔴';
+
+    const pocketIcons: Record<string, string> = {
+      Jajan: '🍔',
+      Skincare: '💄',
+      Bensin: '⛽',
+      Darurat: '🚨'
+    };
+
+    const pocketsText = summary.pockets
+      .map((p) => {
+        const icon = pocketIcons[p.category] || '📁';
+        return `${icon} *Pos ${p.category}:*
+   ├ 🟢 Masuk (Budget): ${formatRupiah(p.totalIncome)}
+   ├ 🔴 Keluar (Pakai): ${formatRupiah(p.totalExpense)}
+   └ 📊 Sisa Saldo    : *${formatRupiah(p.netCashflow)}* _[${p.totalTransactions}x]_`;
+      })
+      .join('\n\n');
+
+    const aiBlock = aiAnalysis
+      ? `\n━━━━━━━━━━━━━━━━━━━━\n🤖 *ANALISIS & SARAN KHUSUS ISTRI:*\n\n${aiAnalysis}\n`
+      : '';
+
+    return `👩 *LAPORAN KEUANGAN: TRANSAKSI ISTRI*
+📅 *Periode:* ${summary.period.toUpperCase()}
+━━━━━━━━━━━━━━━━━━━━
+
+📑 *RINCIAN 4 POS KATEGORI ISTRI:*
+
+${pocketsText}
+
+━━━━━━━━━━━━━━━━━━━━
+📈 *TOTAL REKAP TRANSAKSI ISTRI:*
+💵 *Total Masuk:*  ${formatRupiah(summary.totalIncome)}
+💸 *Total Keluar:* ${formatRupiah(summary.totalExpense)}
+${cashflowSign} *Sisa Saldo:*   ${formatRupiah(summary.netCashflow)}
+🔢 *Total Transaksi:* ${summary.totalTransactions} transaksi
+${aiBlock}━━━━━━━━━━━━━━━━━━━━
+💡 _Input transaksi istri wajib pakai tag kategori (cth: \`.istri /jajan\` atau \`.istri /skincare\`)._
 🌐 _Data tersinkron otomatis ke Google Sheets._`;
   }
 
@@ -186,6 +263,27 @@ ${listText}
   }
 
   /**
+   * Peringatan jika transaksi Istri tidak menyertakan kategori garis miring ( / )
+   */
+  public formatMissingIstriTagErrorMessage(): string {
+    return `⚠️ *MOHON SERTAKAN KATEGORI KHUSUS ISTRI (DENGAN TANDA / )*
+
+Khusus untuk *Transaksi Istri*, wajib menyertakan salah satu pos kategori dengan tanda garis miring ( **/** ) pada teks / caption:
+
+🏷️ *Pilihan Kategori Istri:*
+• */jajan* ➔ Jajan & Cemilan
+• */skincare* ➔ Skincare & Perawatan
+• */bensin* ➔ Bensin & Transportasi
+• */darurat* ➔ Dana Darurat Istri
+
+_Contoh Input:_
+• _"Uang jajan 500rb bca .istri /jajan"_
+• _"Beli seblak 25rb cash .istri /jajan"_
+• _"Beli toner 85rb bca .istri /skincare"_
+• Atau kirim foto struk dengan caption: \`*.istri /skincare*\` atau \`*.istri /jajan*\``;
+  }
+
+  /**
    * Peringatan jika pengiriman foto struk tidak menyertakan caption tag
    */
   public formatMissingTagErrorMessage(): string {
@@ -194,13 +292,13 @@ ${listText}
 Untuk memastikan data tercatat di tab yang tepat, setiap foto bukti/struk transaksi *wajib menyertakan caption tag* di bawah ini:
 
 🏷️ *Pilihan Tag Sheet:*
-• *.istri* ➔ Transaksi Istri
+• *.istri* ➔ Transaksi Istri (sertakan juga pos: \`/jajan\`, \`/skincare\`, \`/bensin\`, \`/darurat\`)
 • *.suami* ➔ Transaksi Suami
 • *.makan* ➔ Transaksi Makan
 • *.belanja* ➔ Transaksi Belanja Bulanan
 • *.tabungan* ➔ Tabungan
 
-_Contoh:_ Kirim ulang foto struk dengan caption \`*.makan*\` atau \`*makan siang soto .suami*\``;
+_Contoh:_ Kirim ulang foto struk dengan caption \`*.makan*\` atau \`*.istri /skincare*\``;
   }
 
   /**
@@ -213,7 +311,7 @@ _Contoh:_ Kirim ulang foto struk dengan caption \`*.makan*\` atau \`*makan siang
 Saya siap membantu mencatat transaksi ke dalam *5 Sheet* terpisah secara otomatis.
 
 🏷️ *DAFTAR 5 SHEET & TAG SUFIKS:*
-• *.istri* ➔ Sheet *Transaksi Istri*
+• *.istri* ➔ Sheet *Transaksi Istri* *(Wajib tambah kategori: \`/jajan\`, \`/skincare\`, \`/bensin\`, \`/darurat\`)*
 • *.suami* ➔ Sheet *Transaksi Suami*
 • *.makan* ➔ Sheet *Transaksi Makan*
 • *.belanja* ➔ Sheet *Transaksi Belanja Bulanan*
@@ -221,24 +319,25 @@ Saya siap membantu mencatat transaksi ke dalam *5 Sheet* terpisah secara otomati
 
 📸 *Cara Pakai OCR Foto (Wajib Pakai Caption Tag):*
 Kirim foto struk / screenshot m-banking dengan caption tag, contoh:
-• Kirim foto struk dengan caption: \`.makan\`
-• Kirim bukti transfer dengan caption: \`Transfer bulanan .istri\`
+• Foto makan siang dengan caption: \`.makan\`
+• Foto skincare dengan caption: \`.istri /skincare\`
+• Foto jajan boba dengan caption: \`.istri /jajan\`
 
 ✍️ *Cara Pakai Input Teks Manual:*
 Ketik transaksi diakhiri tag, contoh:
+• _"Uang jajan masuk 1jt .istri /jajan"_
+• _"Beli kopi 25rb cash .istri /jajan"_
+• _"Beli sunscreen 120rb bca .istri /skincare"_
+• _"Isi bensin motor 30rb cash .istri /bensin"_
 • _"Makan siang 25rb cash .makan"_
-• _"Beli skincare 150rb bca .istri"_
-• _"Beli bensin 50rb cash .suami"_
 • _"Belanja bulanan superindo 350rb bca .belanja"_
-• _"Nabung reksadana 500rb bca .tabungan"_
 
 📋 *Daftar Perintah Laporan:*
-• *${p}laporan* : Rekap gabungan semua sheet
-• *${p}laporan .istri* : Rekap khusus Transaksi Istri
+• *${p}laporan* : Rekap gabungan 5 sheet keluarga
+• *${p}laporan .istri* : Rekap khusus 4 pos Transaksi Istri (Jajan, Skincare, Bensin, Darurat)
 • *${p}laporan .makan* : Rekap khusus Transaksi Makan
 • *${p}laporan .belanja* : Rekap khusus Belanja Bulanan
 • *${p}hari-ini* : Transaksi hari ini (semua sheet)
-• *${p}hari-ini .makan* : Transaksi hari ini khusus sheet makan
 • *${p}batal* : Batalkan transaksi terakhir
 • *${p}link* : Tampilkan link Google Spreadsheet`;
   }

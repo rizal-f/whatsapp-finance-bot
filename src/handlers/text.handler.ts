@@ -3,7 +3,7 @@ import { GeminiService } from '../services/gemini.service.js';
 import { SheetsService } from '../services/sheets.service.js';
 import { ReporterService } from '../services/reporter.service.js';
 import { config } from '../config/env.js';
-import { parseSheetTag } from '../types/transaction.js';
+import { parseSheetTag, parseIstriCategory, TARGET_SHEETS } from '../types/transaction.js';
 import { cleanPhoneNumber } from '../utils/formatter.js';
 import { logger } from '../utils/logger.js';
 
@@ -68,8 +68,28 @@ export class TextHandler {
         const { targetSheet } = parseSheetTag(text);
         const now = new Date();
 
-        if (targetSheet) {
-          // Laporan untuk Sheet Spesifik
+        if (targetSheet === TARGET_SHEETS.ISTRI) {
+          // Laporan Khusus Transaksi Istri (dengan 4 pos kategori: Jajan, Skincare, Bensin, Darurat)
+          await sock.sendMessage(
+            chatJid,
+            { text: `📊 *Sedang menyusun laporan khusus 4 pos '${targetSheet}' & analisis AI...*` }
+          );
+
+          const istriSummary = await this.sheetsService.getIstriMonthlySummary(
+            now.getFullYear(),
+            now.getMonth() + 1
+          );
+          const aiAnalysis = await this.geminiService.generateSingleSheetAnalysis(
+            istriSummary,
+            targetSheet
+          );
+          const reportText = this.reporterService.formatIstriMonthlyReportMessage(
+            istriSummary,
+            aiAnalysis
+          );
+          await sock.sendMessage(chatJid, { text: reportText }, { quoted: msg });
+        } else if (targetSheet) {
+          // Laporan untuk Sheet Spesifik lainnya (Suami, Makan, Belanja, Tabungan)
           await sock.sendMessage(
             chatJid,
             { text: `📊 *Sedang menyusun laporan sheet '${targetSheet}' & analisis AI...*` }
@@ -160,14 +180,34 @@ export class TextHandler {
         return;
       }
 
-      // 7. Coba ekstraksi sebagai transaksi manual lewat AI (cth: "makan soto 25rb cash .makan")
+      // 7. Coba ekstraksi sebagai transaksi manual lewat AI
       const { targetSheet, cleanText } = parseSheetTag(text);
 
       if (targetSheet) {
-        // Tag sheet valid ditemukan ➔ Proses ekstraksi
-        const inputForAI = cleanText.startsWith(p) ? cleanText.slice(p.length) : cleanText;
+        // Jika targetnya adalah Transaksi Istri, WAJIB menyertakan tag slash kategori (/jajan, /skincare, dll.)
+        let customCategory: string | null = null;
+        let textToExtract = cleanText;
+
+        if (targetSheet === TARGET_SHEETS.ISTRI) {
+          const parsedIstri = parseIstriCategory(cleanText);
+          if (!parsedIstri.category) {
+            await sock.sendMessage(
+              chatJid,
+              { text: this.reporterService.formatMissingIstriTagErrorMessage() },
+              { quoted: msg }
+            );
+            return;
+          }
+          customCategory = parsedIstri.category;
+          textToExtract = parsedIstri.cleanText;
+        }
+
+        const inputForAI = textToExtract.startsWith(p) ? textToExtract.slice(p.length) : textToExtract;
         const extracted = await this.geminiService.extractFromText(inputForAI);
         if (extracted) {
+          if (customCategory) {
+            extracted.category = customCategory;
+          }
           const submittedBy = senderName
             ? `${senderName} (${cleanPhoneNumber(senderJid)})`
             : cleanPhoneNumber(senderJid);
@@ -200,7 +240,7 @@ export class TextHandler {
         await sock.sendMessage(
           chatJid,
           {
-            text: `⚠️ *MOHON SERTAKAN TAG SHEET DI AKHIR PESAN*\n\nContoh:\n• _"${text} .makan"_\n• _"${text} .istri"_\n• _"${text} .suami"_\n• _"${text} .belanja"_\n• _"${text} .tabungan"_`
+            text: `⚠️ *MOHON SERTAKAN TAG SHEET DI AKHIR PESAN*\n\nContoh:\n• _"${text} .makan"_\n• _"${text} .istri /jajan"_\n• _"${text} .suami"_\n• _"${text} .belanja"_\n• _"${text} .tabungan"_`
           },
           { quoted: msg }
         );
@@ -210,11 +250,11 @@ export class TextHandler {
       // 9. Jika berupa pertanyaan umum tentang keuangan di DM
       if (!isGroup && text.length > 5 && (lower.includes('?') || lower.includes('bagaimana') || lower.includes('apakah') || lower.includes('tips') || lower.includes('saran') || lower.includes('analisis'))) {
         const now = new Date();
-        const summary = await this.sheetsService.getMonthlySummary(
+        const summary = await this.sheetsService.getComprehensiveMonthlySummary(
           now.getFullYear(),
           now.getMonth() + 1
         );
-        const context = `Bulan: ${summary.period}, Total Masuk: Rp ${summary.totalIncome}, Total Keluar: Rp ${summary.totalExpense}, Sisa: Rp ${summary.netCashflow}. Kategori: ${JSON.stringify(summary.categoryBreakdown)}`;
+        const context = `Bulan: ${summary.period}, Total Masuk: Rp ${summary.grandTotalIncome}, Total Keluar: Rp ${summary.grandTotalExpense}, Sisa: Rp ${summary.grandNetCashflow}. Kategori: ${JSON.stringify(summary.categoryBreakdown)}`;
         const aiAnswer = await this.geminiService.generateFinancialAdviceOrAnswer(text, context);
         await sock.sendMessage(chatJid, { text: aiAnswer }, { quoted: msg });
         return;
@@ -225,7 +265,7 @@ export class TextHandler {
         await sock.sendMessage(
           chatJid,
           {
-            text: `🤖 Kirim foto struk dengan caption tag (cth: \`.makan\`), ketik catatan transaksi (cth: _"Makan soto 25rb .makan"_), atau ketik *${p}bantuan* untuk panduan lengkap.`
+            text: `🤖 Kirim foto struk dengan caption tag (cth: \`.makan\` atau \`.istri /skincare\`), ketik transaksi (cth: _"Beli kopi 25rb .istri /jajan"_), atau ketik *${p}bantuan* untuk panduan lengkap.`
           },
           { quoted: msg }
         );

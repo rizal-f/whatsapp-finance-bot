@@ -8,6 +8,10 @@ import {
   CategorySummary,
   SheetSummaryItem,
   ComprehensiveMonthlySummary,
+  ISTRI_CATEGORIES,
+  IstriCategory,
+  IstriPocketSummary,
+  IstriMonthlySummary,
   ALL_TARGET_SHEETS,
   TARGET_SHEETS,
   TargetSheetName
@@ -329,6 +333,90 @@ export class SheetsService {
   }
 
   /**
+   * Menghitung ringkasan bulanan khusus 4 pos Transaksi Istri (/jajan, /skincare, /darurat, /bensin)
+   */
+  public async getIstriMonthlySummary(
+    year: number,
+    month: number
+  ): Promise<IstriMonthlySummary> {
+    const monthStr = String(month).padStart(2, '0');
+    const prefix = `${year}-${monthStr}`;
+    const all = await this.getAllTransactions(TARGET_SHEETS.ISTRI);
+    const monthTxs = all.filter((tx) => tx.date.startsWith(prefix));
+
+    const pocketMap: Record<IstriCategory, { income: number; expense: number; count: number }> = {
+      Jajan: { income: 0, expense: 0, count: 0 },
+      Skincare: { income: 0, expense: 0, count: 0 },
+      Darurat: { income: 0, expense: 0, count: 0 },
+      Bensin: { income: 0, expense: 0, count: 0 }
+    };
+
+    let totalIncome = 0;
+    let totalExpense = 0;
+    const categoryMap: Record<string, { total: number; count: number }> = {};
+
+    for (const tx of monthTxs) {
+      // Normalisasi kategori Istri
+      let matchedCategory: IstriCategory = 'Jajan';
+      const catLower = (tx.category || '').toLowerCase();
+      if (catLower.includes('skin')) matchedCategory = 'Skincare';
+      else if (catLower.includes('bensin') || catLower.includes('transport')) matchedCategory = 'Bensin';
+      else if (catLower.includes('darurat')) matchedCategory = 'Darurat';
+      else if (catLower.includes('jajan') || catLower.includes('makan')) matchedCategory = 'Jajan';
+      else {
+        matchedCategory = 'Jajan';
+      }
+
+      if (tx.type === 'INCOME') {
+        totalIncome += tx.amount;
+        pocketMap[matchedCategory].income += tx.amount;
+        pocketMap[matchedCategory].count += 1;
+      } else if (tx.type === 'EXPENSE' || tx.type === 'TRANSFER') {
+        totalExpense += tx.amount;
+        pocketMap[matchedCategory].expense += tx.amount;
+        pocketMap[matchedCategory].count += 1;
+
+        if (!categoryMap[matchedCategory]) {
+          categoryMap[matchedCategory] = { total: 0, count: 0 };
+        }
+        categoryMap[matchedCategory].total += tx.amount;
+        categoryMap[matchedCategory].count += 1;
+      }
+    }
+
+    const pockets: IstriPocketSummary[] = ISTRI_CATEGORIES.map((cat) => ({
+      category: cat,
+      totalIncome: pocketMap[cat].income,
+      totalExpense: pocketMap[cat].expense,
+      netCashflow: pocketMap[cat].income - pocketMap[cat].expense,
+      totalTransactions: pocketMap[cat].count
+    }));
+
+    const categoryBreakdown: CategorySummary[] = Object.entries(categoryMap)
+      .map(([category, data]) => ({
+        category,
+        total: data.total,
+        count: data.count,
+        percentage: totalExpense > 0 ? (data.total / totalExpense) * 100 : 0
+      }))
+      .sort((a, b) => b.total - a.total);
+
+    return {
+      period: `${getIndonesianMonthName(month - 1)} ${year}`,
+      year,
+      month,
+      targetSheet: TARGET_SHEETS.ISTRI,
+      totalIncome,
+      totalExpense,
+      netCashflow: totalIncome - totalExpense,
+      totalTransactions: monthTxs.length,
+      categoryBreakdown,
+      recentTransactions: monthTxs.slice(-5).reverse(),
+      pockets
+    };
+  }
+
+  /**
    * Menghitung rekapan komprehensif seluruh 5 sheet untuk laporan keuangan keluarga
    */
   public async getComprehensiveMonthlySummary(
@@ -373,12 +461,19 @@ export class SheetsService {
       grandTotalIncome += sheetIncome;
       grandTotalExpense += sheetExpense;
 
+      let istriPockets: IstriPocketSummary[] | undefined;
+      if (sheetName === TARGET_SHEETS.ISTRI) {
+        const istriSummary = await this.getIstriMonthlySummary(year, month);
+        istriPockets = istriSummary.pockets;
+      }
+
       sheetsBreakdown.push({
         sheetName,
         totalIncome: sheetIncome,
         totalExpense: sheetExpense,
         netCashflow: sheetIncome - sheetExpense,
-        totalTransactions: filtered.length
+        totalTransactions: filtered.length,
+        istriPockets
       });
     }
 

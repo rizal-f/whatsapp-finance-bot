@@ -2,7 +2,7 @@ import { WAMessage, WASocket, downloadMediaMessage } from '@whiskeysockets/baile
 import { GeminiService } from '../services/gemini.service.js';
 import { SheetsService } from '../services/sheets.service.js';
 import { ReporterService } from '../services/reporter.service.js';
-import { parseSheetTag } from '../types/transaction.js';
+import { parseSheetTag, parseIstriCategory, TARGET_SHEETS } from '../types/transaction.js';
 import { cleanPhoneNumber } from '../utils/formatter.js';
 import { logger } from '../utils/logger.js';
 
@@ -35,7 +35,7 @@ export class ImageHandler {
         ''
       ).trim();
 
-      // 1. Validasi Wajib Tag Sufiks pada Caption Foto
+      // 1. Validasi Wajib Tag Sufiks pada Caption Foto (.istri, .suami, .makan, .belanja, .tabungan)
       const { targetSheet } = parseSheetTag(caption);
 
       if (!targetSheet) {
@@ -48,16 +48,32 @@ export class ImageHandler {
         return;
       }
 
-      // 2. Beri respon awal bahwa gambar sedang dianalisis
+      // 2. Validasi Khusus Transaksi Istri: Wajib menyertakan /jajan, /skincare, /bensin, /darurat
+      let istriCategory: string | null = null;
+      if (targetSheet === TARGET_SHEETS.ISTRI) {
+        const parsedIstri = parseIstriCategory(caption);
+        if (!parsedIstri.category) {
+          logger.info({ senderName, chatJid, caption }, 'Foto struk Istri ditolak: Tidak menyertakan tag slash kategori (/jajan, /skincare, dll.)');
+          await sock.sendMessage(
+            chatJid,
+            { text: this.reporterService.formatMissingIstriTagErrorMessage() },
+            { quoted: msg }
+          );
+          return;
+        }
+        istriCategory = parsedIstri.category;
+      }
+
+      // 3. Beri respon awal bahwa gambar sedang dianalisis
       await sock.sendMessage(
         chatJid,
         {
-          text: `⏳ *Sedang membaca struk untuk Sheet '${targetSheet}'...*\n_Mohon tunggu sebentar ya..._`
+          text: `⏳ *Sedang membaca struk untuk Sheet '${targetSheet}'${istriCategory ? ` (Pos: ${istriCategory})` : ''}...*\n_Mohon tunggu sebentar ya..._`
         },
         { quoted: msg }
       );
 
-      // 3. Download buffer gambar dari WhatsApp
+      // 4. Download buffer gambar dari WhatsApp
       const buffer = (await downloadMediaMessage(
         msg,
         'buffer',
@@ -84,7 +100,7 @@ export class ImageHandler {
         inner?.documentMessage?.mimetype ||
         'image/jpeg';
 
-      // 4. Ekstrak data transaksi dengan Gemini Vision AI
+      // 5. Ekstrak data transaksi dengan Gemini Vision AI
       const extracted = await this.geminiService.extractFromImage(buffer, mimeType);
 
       if (!extracted) {
@@ -98,11 +114,16 @@ export class ImageHandler {
         return;
       }
 
-      // 5. Simpan ke Google Spreadsheet pada Tab Sheet yang Dituju
+      // Jika transaksi istri, pasang kategori khusus yang sudah dipilih (/jajan, /skincare, dll.)
+      if (targetSheet === TARGET_SHEETS.ISTRI && istriCategory) {
+        extracted.category = istriCategory;
+      }
+
+      // 6. Simpan ke Google Spreadsheet pada Tab Sheet yang Dituju
       const submittedBy = senderName ? `${senderName} (${cleanPhoneNumber(senderJid)})` : cleanPhoneNumber(senderJid);
       const record = await this.sheetsService.appendTransaction(extracted, submittedBy, groupName, targetSheet);
 
-      // 6. Kirim konfirmasi hasil pencatatan
+      // 7. Kirim konfirmasi hasil pencatatan
       const replyMessage = this.reporterService.formatTransactionSavedMessage(record);
       await sock.sendMessage(chatJid, { text: replyMessage }, { quoted: msg });
     } catch (error: any) {

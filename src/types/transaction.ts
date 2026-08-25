@@ -143,12 +143,68 @@ export interface MonthlySummary {
   recentTransactions: TransactionRecord[];
 }
 
+export const ISTRI_CATEGORIES = ['Jajan', 'Skincare', 'Darurat', 'Bensin'] as const;
+export type IstriCategory = typeof ISTRI_CATEGORIES[number];
+
+export const ISTRI_CATEGORY_TAGS: Record<string, IstriCategory> = {
+  '/jajan': 'Jajan',
+  'jajan': 'Jajan',
+  '/skincare': 'Skincare',
+  'skincare': 'Skincare',
+  '/skin': 'Skincare',
+  'skin': 'Skincare',
+  '/darurat': 'Darurat',
+  'darurat': 'Darurat',
+  '/bensin': 'Bensin',
+  'bensin': 'Bensin'
+};
+
+/**
+ * Mengekstrak tag kategori khusus istri (cth: /jajan, /skincare, /darurat, /bensin)
+ */
+export function parseIstriCategory(text: string): {
+  category: IstriCategory | null;
+  cleanText: string;
+  tagFound?: string;
+} {
+  if (!text || text.trim() === '') {
+    return { category: null, cleanText: '' };
+  }
+
+  const trimmed = text.trim();
+  // Regex mencari token berawalan slash seperti /jajan, /skincare, /skin, /darurat, /bensin
+  const slashRegex = /(?:^|\s)(\/(?:jajan|skincare|skin|darurat|bensin))\b/i;
+  const match = trimmed.match(slashRegex);
+
+  if (match) {
+    const rawTag = match[1].toLowerCase();
+    const category = ISTRI_CATEGORY_TAGS[rawTag] || null;
+    const cleanText = trimmed.replace(match[0], ' ').replace(/\s+/g, ' ').trim();
+    return { category, cleanText, tagFound: rawTag };
+  }
+
+  return { category: null, cleanText: trimmed };
+}
+
+export interface IstriPocketSummary {
+  category: IstriCategory;
+  totalIncome: number;
+  totalExpense: number;
+  netCashflow: number;
+  totalTransactions: number;
+}
+
+export interface IstriMonthlySummary extends MonthlySummary {
+  pockets: IstriPocketSummary[];
+}
+
 export interface SheetSummaryItem {
   sheetName: string;
   totalIncome: number;
   totalExpense: number;
   netCashflow: number;
   totalTransactions: number;
+  istriPockets?: IstriPocketSummary[];
 }
 
 export interface ComprehensiveMonthlySummary {
