@@ -1,4 +1,4 @@
-import { parseSheetTag, parseIstriCategory } from '../src/types/transaction.js';
+import { parseSheetTag, parseIstriCategory, parseReportPeriod } from '../src/types/transaction.js';
 
 console.log('Testing parseSheetTag helper...');
 
@@ -51,8 +51,38 @@ for (const t of istriTests) {
   }
 }
 
+console.log('\nTesting parseReportPeriod helper...');
+const now = new Date();
+const currentYear = now.getFullYear();
+const currentMonth = now.getMonth() + 1;
+const prevMonth = now.getMonth() === 0 ? 12 : now.getMonth();
+const prevYear = now.getMonth() === 0 ? currentYear - 1 : currentYear;
+
+const periodTests = [
+  { input: '!laporan', expectedMonth: currentMonth, expectedYear: currentYear, isSpecific: false },
+  { input: '!laporan bulan-lalu', expectedMonth: prevMonth, expectedYear: prevYear, isSpecific: true },
+  { input: '!laporan bulan lalu .istri', expectedMonth: prevMonth, expectedYear: prevYear, isSpecific: true },
+  { input: '!laporan juli 2026', expectedMonth: 7, expectedYear: 2026, isSpecific: true },
+  { input: '!laporan agustus .makan', expectedMonth: 8, expectedYear: currentYear, isSpecific: true },
+  { input: '!laporan 06-2026', expectedMonth: 6, expectedYear: 2026, isSpecific: true },
+  { input: '!laporan 2026-05 .belanja', expectedMonth: 5, expectedYear: 2026, isSpecific: true }
+];
+
+for (const t of periodTests) {
+  const result = parseReportPeriod(t.input);
+  const mMatch = result.month === t.expectedMonth;
+  const yMatch = result.year === t.expectedYear;
+  const sMatch = result.isSpecificPeriod === t.isSpecific;
+  if (!mMatch || !yMatch || !sMatch) {
+    console.error(`❌ FAILED for input "${t.input}": got month ${result.month} year ${result.year} specific ${result.isSpecificPeriod} (expected month ${t.expectedMonth} year ${t.expectedYear} specific ${t.isSpecific})`);
+    allPassed = false;
+  } else {
+    console.log(`✅ PASSED: "${t.input}" -> Month ${result.month}/${result.year}`);
+  }
+}
+
 if (allPassed) {
-  console.log('\n🎉 ALL TAG AND ISTRI CATEGORY TESTS PASSED SUCCESSFULLY!');
+  console.log('\n🎉 ALL TESTS (TAGS, ISTRI CATEGORIES, & REPORT PERIODS) PASSED SUCCESSFULLY!');
 } else {
   process.exit(1);
 }

@@ -43,9 +43,9 @@ _Ketik *${config.commandPrefix}batal* dalam 2 menit jika ingin membatalkan trans
     summary: ComprehensiveMonthlySummary,
     aiAnalysis?: string
   ): string {
-    const cashflowSign = summary.grandNetCashflow >= 0 ? '🟢' : '🔴';
+    const cashflowSign = summary.grandFinalBalance >= 0 ? '🟢' : '🔴';
 
-    // Rincian per sheet
+    // Rincian per sheet (Semua 5 sheet disamakan formatnya)
     const sheetsText = summary.sheetsBreakdown
       .map((s) => {
         let icon = '📁';
@@ -66,21 +66,23 @@ _Ketik *${config.commandPrefix}batal* dalam 2 menit jika ingin membatalkan trans
           const pocketDetails = s.istriPockets
             .map((p) => {
               const pIcon = pocketIcons[p.category] || '•';
-              return `   ├ ${pIcon} *${p.category}:* Masuk ${formatRupiah(p.totalIncome)} | Keluar ${formatRupiah(p.totalExpense)} | Sisa *${formatRupiah(p.netCashflow)}*`;
+              return `   ├ ${pIcon} *${p.category}:* Awal ${formatRupiah(p.initialBalance)} | +${formatRupiah(p.totalIncome)} | -${formatRupiah(p.totalExpense)} ➔ *${formatRupiah(p.finalBalance)}*`;
             })
             .join('\n');
 
           return `${icon} *${s.sheetName}:*
 ${pocketDetails}
-   ├ 🟢 Total Masuk : ${formatRupiah(s.totalIncome)}
-   ├ 🔴 Total Keluar: ${formatRupiah(s.totalExpense)}
-   └ 📊 Total Sisa  : *${formatRupiah(s.netCashflow)}* _[${s.totalTransactions}x]_`;
+   ├ 📥 Saldo Awal   : ${formatRupiah(s.initialBalance)}
+   ├ 🟢 Total Masuk  : ${formatRupiah(s.totalIncome)}
+   ├ 🔴 Total Keluar : ${formatRupiah(s.totalExpense)}
+   └ 📊 Total Saldo  : *${formatRupiah(s.finalBalance)}* _[${s.totalTransactions}x]_`;
         }
 
         return `${icon} *${s.sheetName}:*
-   ├ 🟢 Masuk : ${formatRupiah(s.totalIncome)}
-   ├ 🔴 Keluar: ${formatRupiah(s.totalExpense)}
-   └ 📊 Sisa  : *${formatRupiah(s.netCashflow)}* _[${s.totalTransactions}x]_`;
+   ├ 📥 Saldo Awal : ${formatRupiah(s.initialBalance)}
+   ├ 🟢 Masuk      : ${formatRupiah(s.totalIncome)}
+   ├ 🔴 Keluar     : ${formatRupiah(s.totalExpense)}
+   └ 📊 Sisa Saldo : *${formatRupiah(s.finalBalance)}* _[${s.totalTransactions}x]_`;
       })
       .join('\n\n');
 
@@ -112,17 +114,20 @@ ${sheetsText}
 
 ━━━━━━━━━━━━━━━━━━━━
 📈 *TOTAL GABUNGAN KELUARGA:*
-💵 *Total Pemasukan:*  ${formatRupiah(summary.grandTotalIncome)}
-💸 *Total Pengeluaran:* ${formatRupiah(summary.grandTotalExpense)}
-${cashflowSign} *Sisa Arus Kas:*     ${formatRupiah(summary.grandNetCashflow)}
-🔢 *Total Transaksi:*    ${summary.grandTotalTransactions} transaksi
+🏦 *Saldo Awal (Bawaan):* ${formatRupiah(summary.grandInitialBalance)}
+💵 *Pemasukan Bulan Ini:* ${formatRupiah(summary.grandTotalIncome)}
+💸 *Pengeluaran Bulan Ini:* ${formatRupiah(summary.grandTotalExpense)}
+📊 *Arus Kas Bulan Ini:*  ${formatRupiah(summary.grandNetCashflow)}
+━━━━━━━━━━━━━━━━━━━━
+${cashflowSign} *TOTAL SISA SALDO AKHIR:* *${formatRupiah(summary.grandFinalBalance)}*
+🔢 *Total Transaksi:* ${summary.grandTotalTransactions} transaksi
 
 ━━━━━━━━━━━━━━━━━━━━
 🏷️ *Top 5 Kategori Pengeluaran:*
 
 ${categoryText}
 ${aiBlock}━━━━━━━━━━━━━━━━━━━━
-💡 _Gunakan perintah seperti *${config.commandPrefix}laporan .istri* atau *${config.commandPrefix}laporan .belanja* untuk rincian sheet tertentu._
+💡 _Ketik *${config.commandPrefix}laporan bulan-lalu* atau *${config.commandPrefix}laporan juli 2026* untuk melihat arsip bulan lainnya._
 🌐 _Data tersinkron otomatis ke Google Sheets._`;
   }
 
@@ -133,7 +138,7 @@ ${aiBlock}━━━━━━━━━━━━━━━━━━━━
     summary: IstriMonthlySummary,
     aiAnalysis?: string
   ): string {
-    const cashflowSign = summary.netCashflow >= 0 ? '🟢' : '🔴';
+    const cashflowSign = summary.finalBalance >= 0 ? '🟢' : '🔴';
 
     const pocketIcons: Record<string, string> = {
       Jajan: '🍔',
@@ -146,9 +151,10 @@ ${aiBlock}━━━━━━━━━━━━━━━━━━━━
       .map((p) => {
         const icon = pocketIcons[p.category] || '📁';
         return `${icon} *Pos ${p.category}:*
-   ├ 🟢 Masuk (Budget): ${formatRupiah(p.totalIncome)}
-   ├ 🔴 Keluar (Pakai): ${formatRupiah(p.totalExpense)}
-   └ 📊 Sisa Saldo    : *${formatRupiah(p.netCashflow)}* _[${p.totalTransactions}x]_`;
+   ├ 📥 Saldo Awal : ${formatRupiah(p.initialBalance)}
+   ├ 🟢 Masuk      : ${formatRupiah(p.totalIncome)}
+   ├ 🔴 Keluar     : ${formatRupiah(p.totalExpense)}
+   └ 📊 Sisa Akhir : *${formatRupiah(p.finalBalance)}* _[${p.totalTransactions}x]_`;
       })
       .join('\n\n');
 
@@ -166,9 +172,12 @@ ${pocketsText}
 
 ━━━━━━━━━━━━━━━━━━━━
 📈 *TOTAL REKAP TRANSAKSI ISTRI:*
+🏦 *Saldo Awal (Bawaan):* ${formatRupiah(summary.initialBalance)}
 💵 *Total Masuk:*  ${formatRupiah(summary.totalIncome)}
 💸 *Total Keluar:* ${formatRupiah(summary.totalExpense)}
-${cashflowSign} *Sisa Saldo:*   ${formatRupiah(summary.netCashflow)}
+📊 *Arus Kas Bulan Ini:* ${formatRupiah(summary.netCashflow)}
+━━━━━━━━━━━━━━━━━━━━
+${cashflowSign} *TOTAL SISA SALDO AKHIR:* *${formatRupiah(summary.finalBalance)}*
 🔢 *Total Transaksi:* ${summary.totalTransactions} transaksi
 ${aiBlock}━━━━━━━━━━━━━━━━━━━━
 💡 _Input transaksi istri wajib pakai tag kategori (cth: \`.istri /jajan\` atau \`.istri /skincare\`)._
@@ -183,7 +192,7 @@ ${aiBlock}━━━━━━━━━━━━━━━━━━━━
     targetSheet?: string,
     aiAnalysis?: string
   ): string {
-    const cashflowSign = summary.netCashflow >= 0 ? '🟢' : '🔴';
+    const cashflowSign = summary.finalBalance >= 0 ? '🟢' : '🔴';
     const sheetHeader = targetSheet ? targetSheet.toUpperCase() : 'SEMUA SHEET';
 
     let categoryText = '';
@@ -206,10 +215,13 @@ ${aiBlock}━━━━━━━━━━━━━━━━━━━━
 📅 *Periode:* ${summary.period.toUpperCase()}
 ━━━━━━━━━━━━━━━━━━━━
 
-📈 *Total Pemasukan:*  ${formatRupiah(summary.totalIncome)}
-📉 *Total Pengeluaran:* ${formatRupiah(summary.totalExpense)}
-${cashflowSign} *Arus Kas Bersih:*   ${formatRupiah(summary.netCashflow)}
-🔢 *Total Transaksi:*   ${summary.totalTransactions} transaksi
+🏦 *Saldo Awal (Bawaan):* ${formatRupiah(summary.initialBalance)}
+📈 *Total Pemasukan:*     ${formatRupiah(summary.totalIncome)}
+📉 *Total Pengeluaran:*    ${formatRupiah(summary.totalExpense)}
+📊 *Arus Kas Bulan Ini:*  ${formatRupiah(summary.netCashflow)}
+━━━━━━━━━━━━━━━━━━━━
+${cashflowSign} *TOTAL SISA SALDO AKHIR:* *${formatRupiah(summary.finalBalance)}*
+🔢 *Total Transaksi:* ${summary.totalTransactions} transaksi
 
 ━━━━━━━━━━━━━━━━━━━━
 🏷️ *Rincian Pengeluaran per Kategori:*

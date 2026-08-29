@@ -289,6 +289,18 @@ export class SheetsService {
     const all = await this.getAllTransactions(targetSheet);
     const monthStr = String(month).padStart(2, '0');
     const prefix = `${year}-${monthStr}`;
+    const startOfMonth = `${year}-${monthStr}-01`;
+
+    // Hitung saldo awal (bawaan dari sebelum bulan ini)
+    const priorTransactions = all.filter((tx) => tx.date < startOfMonth);
+    let initialBalance = 0;
+    for (const tx of priorTransactions) {
+      if (tx.type === 'INCOME') {
+        initialBalance += tx.amount;
+      } else if (tx.type === 'EXPENSE' || tx.type === 'TRANSFER') {
+        initialBalance -= tx.amount;
+      }
+    }
 
     const monthTransactions = all.filter((tx) => tx.date.startsWith(prefix));
 
@@ -299,7 +311,7 @@ export class SheetsService {
     for (const tx of monthTransactions) {
       if (tx.type === 'INCOME') {
         totalIncome += tx.amount;
-      } else if (tx.type === 'EXPENSE') {
+      } else if (tx.type === 'EXPENSE' || tx.type === 'TRANSFER') {
         totalExpense += tx.amount;
         if (!categoryMap[tx.category]) {
           categoryMap[tx.category] = { total: 0, count: 0 };
@@ -318,14 +330,19 @@ export class SheetsService {
       }))
       .sort((a, b) => b.total - a.total);
 
+    const netCashflow = totalIncome - totalExpense;
+    const finalBalance = initialBalance + netCashflow;
+
     return {
       period: `${getIndonesianMonthName(month - 1)} ${year}`,
       year,
       month,
       targetSheet,
+      initialBalance,
       totalIncome,
       totalExpense,
-      netCashflow: totalIncome - totalExpense,
+      netCashflow,
+      finalBalance,
       totalTransactions: monthTransactions.length,
       categoryBreakdown,
       recentTransactions: monthTransactions.slice(-5).reverse()
@@ -341,10 +358,41 @@ export class SheetsService {
   ): Promise<IstriMonthlySummary> {
     const monthStr = String(month).padStart(2, '0');
     const prefix = `${year}-${monthStr}`;
+    const startOfMonth = `${year}-${monthStr}-01`;
     const all = await this.getAllTransactions(TARGET_SHEETS.ISTRI);
+
+    const priorTxs = all.filter((tx) => tx.date < startOfMonth);
     const monthTxs = all.filter((tx) => tx.date.startsWith(prefix));
 
-    const pocketMap: Record<IstriCategory, { income: number; expense: number; count: number }> = {
+    const helperCategoryMatch = (cat: string): IstriCategory => {
+      const catLower = (cat || '').toLowerCase();
+      if (catLower.includes('skin')) return 'Skincare';
+      if (catLower.includes('bensin') || catLower.includes('transport')) return 'Bensin';
+      if (catLower.includes('darurat')) return 'Darurat';
+      return 'Jajan';
+    };
+
+    // Hitung saldo awal per pos dari transaksi sebelum bulan ini
+    const pocketInitialBalance: Record<IstriCategory, number> = {
+      Jajan: 0,
+      Skincare: 0,
+      Darurat: 0,
+      Bensin: 0
+    };
+
+    let totalInitialBalance = 0;
+    for (const tx of priorTxs) {
+      const matched = helperCategoryMatch(tx.category);
+      if (tx.type === 'INCOME') {
+        pocketInitialBalance[matched] += tx.amount;
+        totalInitialBalance += tx.amount;
+      } else if (tx.type === 'EXPENSE' || tx.type === 'TRANSFER') {
+        pocketInitialBalance[matched] -= tx.amount;
+        totalInitialBalance -= tx.amount;
+      }
+    }
+
+    const pocketCurrentMap: Record<IstriCategory, { income: number; expense: number; count: number }> = {
       Jajan: { income: 0, expense: 0, count: 0 },
       Skincare: { income: 0, expense: 0, count: 0 },
       Darurat: { income: 0, expense: 0, count: 0 },
@@ -356,25 +404,16 @@ export class SheetsService {
     const categoryMap: Record<string, { total: number; count: number }> = {};
 
     for (const tx of monthTxs) {
-      // Normalisasi kategori Istri
-      let matchedCategory: IstriCategory = 'Jajan';
-      const catLower = (tx.category || '').toLowerCase();
-      if (catLower.includes('skin')) matchedCategory = 'Skincare';
-      else if (catLower.includes('bensin') || catLower.includes('transport')) matchedCategory = 'Bensin';
-      else if (catLower.includes('darurat')) matchedCategory = 'Darurat';
-      else if (catLower.includes('jajan') || catLower.includes('makan')) matchedCategory = 'Jajan';
-      else {
-        matchedCategory = 'Jajan';
-      }
+      const matchedCategory = helperCategoryMatch(tx.category);
 
       if (tx.type === 'INCOME') {
         totalIncome += tx.amount;
-        pocketMap[matchedCategory].income += tx.amount;
-        pocketMap[matchedCategory].count += 1;
+        pocketCurrentMap[matchedCategory].income += tx.amount;
+        pocketCurrentMap[matchedCategory].count += 1;
       } else if (tx.type === 'EXPENSE' || tx.type === 'TRANSFER') {
         totalExpense += tx.amount;
-        pocketMap[matchedCategory].expense += tx.amount;
-        pocketMap[matchedCategory].count += 1;
+        pocketCurrentMap[matchedCategory].expense += tx.amount;
+        pocketCurrentMap[matchedCategory].count += 1;
 
         if (!categoryMap[matchedCategory]) {
           categoryMap[matchedCategory] = { total: 0, count: 0 };
@@ -384,13 +423,23 @@ export class SheetsService {
       }
     }
 
-    const pockets: IstriPocketSummary[] = ISTRI_CATEGORIES.map((cat) => ({
-      category: cat,
-      totalIncome: pocketMap[cat].income,
-      totalExpense: pocketMap[cat].expense,
-      netCashflow: pocketMap[cat].income - pocketMap[cat].expense,
-      totalTransactions: pocketMap[cat].count
-    }));
+    const pockets: IstriPocketSummary[] = ISTRI_CATEGORIES.map((cat) => {
+      const initBal = pocketInitialBalance[cat] || 0;
+      const inc = pocketCurrentMap[cat].income;
+      const exp = pocketCurrentMap[cat].expense;
+      const net = inc - exp;
+      const finBal = initBal + net;
+
+      return {
+        category: cat,
+        initialBalance: initBal,
+        totalIncome: inc,
+        totalExpense: exp,
+        netCashflow: net,
+        finalBalance: finBal,
+        totalTransactions: pocketCurrentMap[cat].count
+      };
+    });
 
     const categoryBreakdown: CategorySummary[] = Object.entries(categoryMap)
       .map(([category, data]) => ({
@@ -401,14 +450,19 @@ export class SheetsService {
       }))
       .sort((a, b) => b.total - a.total);
 
+    const netCashflow = totalIncome - totalExpense;
+    const finalBalance = totalInitialBalance + netCashflow;
+
     return {
       period: `${getIndonesianMonthName(month - 1)} ${year}`,
       year,
       month,
       targetSheet: TARGET_SHEETS.ISTRI,
+      initialBalance: totalInitialBalance,
       totalIncome,
       totalExpense,
-      netCashflow: totalIncome - totalExpense,
+      netCashflow,
+      finalBalance,
       totalTransactions: monthTxs.length,
       categoryBreakdown,
       recentTransactions: monthTxs.slice(-5).reverse(),
@@ -425,16 +479,29 @@ export class SheetsService {
   ): Promise<ComprehensiveMonthlySummary> {
     const monthStr = String(month).padStart(2, '0');
     const prefix = `${year}-${monthStr}`;
+    const startOfMonth = `${year}-${monthStr}-01`;
 
     const sheetsBreakdown: SheetSummaryItem[] = [];
     const allMonthTransactions: TransactionRecord[] = [];
+    let grandInitialBalance = 0;
     let grandTotalIncome = 0;
     let grandTotalExpense = 0;
-    let grandTotalSavings = 0;
     const categoryMap: Record<string, { total: number; count: number }> = {};
 
     for (const sheetName of ALL_TARGET_SHEETS) {
       const sheetTxs = await this.getAllTransactions(sheetName);
+
+      // Hitung saldo awal sheet ini (sebelum bulan ini)
+      const priorTxs = sheetTxs.filter((tx) => tx.date < startOfMonth);
+      let sheetInitialBalance = 0;
+      for (const tx of priorTxs) {
+        if (tx.type === 'INCOME') {
+          sheetInitialBalance += tx.amount;
+        } else if (tx.type === 'EXPENSE' || tx.type === 'TRANSFER') {
+          sheetInitialBalance -= tx.amount;
+        }
+      }
+
       const filtered = sheetTxs.filter((tx) => tx.date.startsWith(prefix));
 
       let sheetIncome = 0;
@@ -457,7 +524,8 @@ export class SheetsService {
         }
       }
 
-      // Semua 5 sheet (termasuk Tabungan) diperlakukan sama dan konsisten
+      // Akumulasi Total Gabungan Keluarga
+      grandInitialBalance += sheetInitialBalance;
       grandTotalIncome += sheetIncome;
       grandTotalExpense += sheetExpense;
 
@@ -467,11 +535,16 @@ export class SheetsService {
         istriPockets = istriSummary.pockets;
       }
 
+      const sheetNet = sheetIncome - sheetExpense;
+      const sheetFinal = sheetInitialBalance + sheetNet;
+
       sheetsBreakdown.push({
         sheetName,
+        initialBalance: sheetInitialBalance,
         totalIncome: sheetIncome,
         totalExpense: sheetExpense,
-        netCashflow: sheetIncome - sheetExpense,
+        netCashflow: sheetNet,
+        finalBalance: sheetFinal,
         totalTransactions: filtered.length,
         istriPockets
       });
@@ -486,14 +559,19 @@ export class SheetsService {
       }))
       .sort((a, b) => b.total - a.total);
 
+    const grandNetCashflow = grandTotalIncome - grandTotalExpense;
+    const grandFinalBalance = grandInitialBalance + grandNetCashflow;
+
     return {
       period: `${getIndonesianMonthName(month - 1)} ${year}`,
       year,
       month,
+      grandInitialBalance,
       grandTotalIncome,
       grandTotalExpense,
       grandTotalSavings: 0,
-      grandNetCashflow: grandTotalIncome - grandTotalExpense,
+      grandNetCashflow,
+      grandFinalBalance,
       grandTotalTransactions: allMonthTransactions.length,
       sheetsBreakdown,
       categoryBreakdown,

@@ -188,9 +188,11 @@ export function parseIstriCategory(text: string): {
 
 export interface IstriPocketSummary {
   category: IstriCategory;
-  totalIncome: number;
-  totalExpense: number;
-  netCashflow: number;
+  initialBalance: number; // Saldo bawaan bulan lalu
+  totalIncome: number;    // Pemasukan bulan ini
+  totalExpense: number;   // Pengeluaran bulan ini
+  netCashflow: number;    // Selisih bulan ini (Masuk - Keluar)
+  finalBalance: number;   // Sisa saldo akhir (Saldo Awal + Masuk - Keluar)
   totalTransactions: number;
 }
 
@@ -200,23 +202,137 @@ export interface IstriMonthlySummary extends MonthlySummary {
 
 export interface SheetSummaryItem {
   sheetName: string;
-  totalIncome: number;
-  totalExpense: number;
-  netCashflow: number;
+  initialBalance: number; // Saldo bawaan bulan lalu
+  totalIncome: number;    // Pemasukan bulan ini
+  totalExpense: number;   // Pengeluaran bulan ini
+  netCashflow: number;    // Selisih bulan ini (Masuk - Keluar)
+  finalBalance: number;   // Sisa saldo akhir (Saldo Awal + Masuk - Keluar)
   totalTransactions: number;
   istriPockets?: IstriPocketSummary[];
+}
+
+export interface MonthlySummary {
+  period: string; // e.g. "Agustus 2026"
+  year: number;
+  month: number;
+  targetSheet?: string;
+  initialBalance: number; // Saldo bawaan bulan lalu
+  totalIncome: number;    // Pemasukan bulan ini
+  totalExpense: number;   // Pengeluaran bulan ini
+  netCashflow: number;    // Selisih bulan ini (Masuk - Keluar)
+  finalBalance: number;   // Sisa saldo akhir (Saldo Awal + Masuk - Keluar)
+  totalTransactions: number;
+  categoryBreakdown: CategorySummary[];
+  recentTransactions: TransactionRecord[];
 }
 
 export interface ComprehensiveMonthlySummary {
   period: string; // e.g. "Agustus 2026"
   year: number;
   month: number;
-  grandTotalIncome: number;
-  grandTotalExpense: number;
+  grandInitialBalance: number; // Total saldo awal gabungan bawaan bulan lalu
+  grandTotalIncome: number;     // Total pemasukan bulan ini
+  grandTotalExpense: number;    // Total pengeluaran bulan ini
   grandTotalSavings: number;
-  grandNetCashflow: number;
+  grandNetCashflow: number;     // Selisih bulan ini (Total Masuk - Total Keluar)
+  grandFinalBalance: number;    // Total saldo akhir (Saldo Awal + Masuk - Keluar)
   grandTotalTransactions: number;
   sheetsBreakdown: SheetSummaryItem[];
   categoryBreakdown: CategorySummary[];
   recentTransactions: TransactionRecord[];
+}
+
+/**
+ * Parsing periode laporan (bulan & tahun) dari perintah pesan teks (cth: "!laporan agustus", "!laporan bulan-lalu", "!laporan 07-2026")
+ */
+export function parseReportPeriod(text: string): {
+  year: number;
+  month: number;
+  cleanText: string;
+  isSpecificPeriod: boolean;
+} {
+  const now = new Date();
+  let year = now.getFullYear();
+  let month = now.getMonth() + 1; // default bulan saat ini
+  let isSpecificPeriod = false;
+
+  const trimmed = text.trim();
+
+  // Cek kata kunci "bulan lalu" / "bulan-lalu" / "kemarin" / "last month" / "prev"
+  const prevMonthRegex = /(?:^|\s)(?:bulan[\s-]lalu|kemarin|last[\s-]month|prev)\b/i;
+  if (prevMonthRegex.test(trimmed)) {
+    let prevMonth = now.getMonth(); // 0-11
+    let prevYear = now.getFullYear();
+    if (prevMonth === 0) {
+      prevMonth = 12;
+      prevYear -= 1;
+    }
+    return {
+      year: prevYear,
+      month: prevMonth,
+      cleanText: trimmed.replace(prevMonthRegex, ' ').replace(/\s+/g, ' ').trim(),
+      isSpecificPeriod: true
+    };
+  }
+
+  // Cek pola angka tanggal seperti MM-YYYY, YYYY-MM, MM/YYYY (cth: "08-2026", "2026-08", "8/2026")
+  const numMatch = trimmed.match(/\b(?:(\d{4})[-/](\d{1,2})|(\d{1,2})[-/](\d{4}))\b/);
+  if (numMatch) {
+    if (numMatch[1] && numMatch[2]) {
+      year = parseInt(numMatch[1], 10);
+      month = parseInt(numMatch[2], 10);
+    } else if (numMatch[3] && numMatch[4]) {
+      month = parseInt(numMatch[3], 10);
+      year = parseInt(numMatch[4], 10);
+    }
+    if (month >= 1 && month <= 12 && year >= 2000 && year <= 2100) {
+      return {
+        year,
+        month,
+        cleanText: trimmed.replace(numMatch[0], ' ').replace(/\s+/g, ' ').trim(),
+        isSpecificPeriod: true
+      };
+    }
+  }
+
+  // Cek nama bulan Indonesia dengan tahun opsional (cth: "agustus 2026", "juli", "januari 2025")
+  const monthNamesMap: Record<string, number> = {
+    januari: 1, jan: 1,
+    februari: 2, feb: 2,
+    maret: 3, mar: 3,
+    april: 4, apr: 4,
+    mei: 5, may: 5,
+    juni: 6, jun: 6,
+    juli: 7, jul: 7,
+    agustus: 8, agu: 8, agt: 8, ags: 8,
+    september: 9, sep: 9, sept: 9,
+    oktober: 10, okt: 10, oct: 10,
+    november: 11, nov: 11,
+    desember: 12, des: 12, dec: 12
+  };
+
+  const monthRegex = /\b(januari|jan|februari|feb|maret|mar|april|apr|mei|juni|jun|juli|jul|agustus|agu|agt|ags|september|sep|sept|oktober|okt|oct|november|nov|desember|des|dec)(?:\s+(\d{4}))?\b/i;
+  const mMatch = trimmed.match(monthRegex);
+  if (mMatch) {
+    const mStr = mMatch[1].toLowerCase();
+    if (monthNamesMap[mStr]) {
+      month = monthNamesMap[mStr];
+      if (mMatch[2]) {
+        year = parseInt(mMatch[2], 10);
+      }
+      return {
+        year,
+        month,
+        cleanText: trimmed.replace(mMatch[0], ' ').replace(/\s+/g, ' ').trim(),
+        isSpecificPeriod: true
+      };
+    }
+  }
+
+  return {
+    year,
+    month,
+    cleanText: trimmed,
+    isSpecificPeriod: false
+  };
 }

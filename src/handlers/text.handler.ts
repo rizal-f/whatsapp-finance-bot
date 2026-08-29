@@ -3,8 +3,8 @@ import { GeminiService } from '../services/gemini.service.js';
 import { SheetsService } from '../services/sheets.service.js';
 import { ReporterService } from '../services/reporter.service.js';
 import { config } from '../config/env.js';
-import { parseSheetTag, parseIstriCategory, TARGET_SHEETS } from '../types/transaction.js';
-import { cleanPhoneNumber } from '../utils/formatter.js';
+import { parseSheetTag, parseIstriCategory, parseReportPeriod, TARGET_SHEETS } from '../types/transaction.js';
+import { cleanPhoneNumber, getIndonesianMonthName } from '../utils/formatter.js';
 import { logger } from '../utils/logger.js';
 
 export class TextHandler {
@@ -58,26 +58,30 @@ export class TextHandler {
         return;
       }
 
-      // 3. Perintah Laporan Bulanan (bisa spesifik per sheet atau laporan komprehensif keluarga)
+      // 3. Perintah Laporan Bulanan (mendukung bulan lalu, bulan tertentu, dan multi-sheet)
       if (
         lower.startsWith(`${p}laporan`) ||
         (!isGroup && lower.startsWith('laporan')) ||
         lower.includes('laporan bulan ini') ||
+        lower.includes('laporan bulan lalu') ||
         lower.includes('rekap bulanan')
       ) {
-        const { targetSheet } = parseSheetTag(text);
-        const now = new Date();
+        const periodResult = parseReportPeriod(text);
+        const { targetSheet } = parseSheetTag(periodResult.cleanText);
+        const reportYear = periodResult.year;
+        const reportMonth = periodResult.month;
+        const monthLabel = `${getIndonesianMonthName(reportMonth - 1)} ${reportYear}`;
 
         if (targetSheet === TARGET_SHEETS.ISTRI) {
           // Laporan Khusus Transaksi Istri (dengan 4 pos kategori: Jajan, Skincare, Bensin, Darurat)
           await sock.sendMessage(
             chatJid,
-            { text: `📊 *Sedang menyusun laporan khusus 4 pos '${targetSheet}' & analisis AI...*` }
+            { text: `📊 *Sedang menyusun laporan '${targetSheet}' (${monthLabel}) & analisis AI...*` }
           );
 
           const istriSummary = await this.sheetsService.getIstriMonthlySummary(
-            now.getFullYear(),
-            now.getMonth() + 1
+            reportYear,
+            reportMonth
           );
           const aiAnalysis = await this.geminiService.generateSingleSheetAnalysis(
             istriSummary,
@@ -92,12 +96,12 @@ export class TextHandler {
           // Laporan untuk Sheet Spesifik lainnya (Suami, Makan, Belanja, Tabungan)
           await sock.sendMessage(
             chatJid,
-            { text: `📊 *Sedang menyusun laporan sheet '${targetSheet}' & analisis AI...*` }
+            { text: `📊 *Sedang menyusun laporan sheet '${targetSheet}' (${monthLabel}) & analisis AI...*` }
           );
 
           const summary = await this.sheetsService.getMonthlySummary(
-            now.getFullYear(),
-            now.getMonth() + 1,
+            reportYear,
+            reportMonth,
             targetSheet
           );
           const aiAnalysis = await this.geminiService.generateSingleSheetAnalysis(summary, targetSheet);
@@ -111,12 +115,12 @@ export class TextHandler {
           // Laporan Komprehensif Seluruh Sheet Keluarga
           await sock.sendMessage(
             chatJid,
-            { text: '📊 *Sedang menyusun laporan keuangan keluarga & analisis AI...*' }
+            { text: `📊 *Sedang menyusun laporan keuangan keluarga (${monthLabel}) & analisis AI...*` }
           );
 
           const comprehensiveSummary = await this.sheetsService.getComprehensiveMonthlySummary(
-            now.getFullYear(),
-            now.getMonth() + 1
+            reportYear,
+            reportMonth
           );
           const aiAnalysis = await this.geminiService.generateMonthlyCashflowAnalysis(
             comprehensiveSummary
